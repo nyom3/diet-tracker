@@ -1,0 +1,28 @@
+{
+  "name": "diet-tracker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "gas:push": "npm run build && clasp push",
+    "gas:deploy": "node scripts/deploy.mjs",
+    "gas:deploy:new": "npm run build && clasp push && clasp deploy"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@google/clasp": "^3.0.6",
+    "@vitejs/plugin-react": "^5.0.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.0",
+    "vite-plugin-singlefile": "^2.0.3"
+  }
+}

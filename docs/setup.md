@@ -18,24 +18,67 @@
 
 ---
 
-## GAS プロジェクトの作成
+## ローカル開発環境
 
-### 3. スクリプトエディタを開く
+### 3. 依存関係をインストールする
 
-1. 上記スプレッドシートのメニュー「拡張機能」→「Apps Script」を開く  
-   （スプレッドシートにバインドすると `SPREADSHEET_ID` の設定が不要になる）
+```sh
+npm install
+```
 
-### 4. ファイルをコピーする
+### 4. React フォームをビルドする
 
-**Code.gs**
-- デフォルトで `コード.gs`（または `Code.gs`）が開いている
-- 中身を `gas/Code.gs` の内容で置き換える
+```sh
+npm run build
+```
 
-**index.html**
-- 左サイドバーの「+」→「HTML」→ファイル名を `index` にする
-- 中身を `gas/index.html` の内容で貼り付ける
+`src/` の React フォームが単一 HTML として `gas/index.html` に出力される。
+Vite の HTML テンプレートには GAS Web App 用の `<base target="_top">` を入れている。
 
-### 5. スクリプトプロパティを設定する
+---
+
+## GAS プロジェクトと clasp
+
+### 5. clasp にログインする
+
+事前に [Google Apps Script API](https://script.google.com/home/usersettings) を有効にしておく。
+
+```sh
+npx clasp login
+```
+
+ブラウザで Google アカウント連携を完了する。
+
+### 6. GAS プロジェクトを作成する
+
+Google ドライブまたは対象スプレッドシートから Apps Script project を作成する。
+既存 project を使う場合は、その script ID を控える。
+
+script ID は Apps Script エディタの「プロジェクトの設定」→「スクリプト ID」で確認できる。
+
+### 7. `.clasp.json` を作成する
+
+`.clasp.example.json` を参考に、repo 直下へ `.clasp.json` を作成する。
+
+```json
+{
+  "scriptId": "YOUR_APPS_SCRIPT_PROJECT_ID",
+  "deploymentId": "",
+  "rootDir": "gas"
+}
+```
+
+`.clasp.json` は project ID と deployment ID を含むため git 管理しない。
+
+### 8. GAS へ push する
+
+```sh
+npm run gas:push
+```
+
+`npm run gas:push` は build 後に `clasp push` を実行し、`gas/` 配下を Apps Script project へ反映する。
+
+### 9. スクリプトプロパティを設定する
 
 1. 左サイドバーの「プロジェクトの設定」（歯車アイコン）を開く
 2. 「スクリプト プロパティ」セクションで「スクリプト プロパティを追加」
@@ -45,24 +88,40 @@
 | `GEMINI_API_KEY` | 手順1で取得したAPIキー |
 | `SPREADSHEET_ID` | 手順2で取得したシートID（バインド済みなら不要） |
 
-### 6. Web App としてデプロイする
+### 10. 初回 Web App deployment を作成する
 
-1. 右上「デプロイ」→「新しいデプロイ」
-2. 種類: 「ウェブアプリ」を選択
-3. 設定:
-   - 説明: 任意（例: `食事記録 v1`）
-   - 次のユーザーとして実行: **「自分」**
-   - アクセスできるユーザー: **「自分のみ」**（スマホからアクセスするため、同じ Google アカウントが必要）
-4. 「デプロイ」を押す
-5. 表示される **Web App URL** をコピーしておく
+初回だけ deployment ID がないため、新規 deployment を作る。
 
-> **再デプロイについて**: コードを変更したあとは「デプロイ」→「デプロイを管理」→「編集」→「バージョンを新しく作成」で反映する。
+```sh
+npm run gas:deploy:new
+```
+
+コマンド出力に表示される deployment ID と Web App URL を控える。
+
+その後、`.clasp.json` の `deploymentId` に控えた ID を記入する。
+
+```json
+{
+  "scriptId": "YOUR_APPS_SCRIPT_PROJECT_ID",
+  "deploymentId": "YOUR_WEB_APP_DEPLOYMENT_ID",
+  "rootDir": "gas"
+}
+```
+
+### 11. 2回目以降は固定 deployment を更新する
+
+```sh
+npm run gas:deploy
+```
+
+`npm run gas:deploy` は `.clasp.json` の `deploymentId` を読み取り、既存 deployment を更新する。
+この運用では Web App URL を毎回変えずに更新できる。
 
 ---
 
 ## スマホからのアクセス
 
-### 7. Android のホーム画面に追加する
+### 12. Android のホーム画面に追加する
 
 1. Android Chrome で Web App URL を開く
 2. ログインを求められたら同じ Google アカウントでログイン
