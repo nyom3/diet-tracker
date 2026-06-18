@@ -31,7 +31,7 @@ const emptyTotal: NutritionTotal = {
 };
 
 function App(): JSX.Element {
-  const [mealType, setMealType] = React.useState<MealType>('朝');
+  const [mealType, setMealType] = React.useState<MealType>(() => getDefaultMealType());
   const [inputMode, setInputMode] = React.useState<InputMode>('photo');
   const [estimateMode, setEstimateMode] = React.useState<EstimateMode>('api');
   const [datetime, setDatetime] = React.useState(() => createLocalDatetimeValue());
@@ -51,11 +51,12 @@ function App(): JSX.Element {
     ? photoNote.trim() || photoFile?.name || ''
     : mealText.trim();
   const manualPrompt = createManualPrompt(inputMode, description);
+  const effectiveTotal = items.length > 0 ? calculateTotal(items, servings) : total;
   const canSave =
     !busy &&
     Boolean(description) &&
     hasNutrition &&
-    Object.values(total).every((value) => Number.isFinite(value) && value >= 0);
+    Object.values(effectiveTotal).every((value) => Number.isFinite(value) && value >= 0);
 
   React.useEffect(() => {
     if (!photoFile) {
@@ -122,7 +123,7 @@ function App(): JSX.Element {
         mealType,
         description,
         estimateMode,
-        total,
+        total: effectiveTotal,
         items,
         servings,
       });
@@ -139,7 +140,7 @@ function App(): JSX.Element {
   }
 
   function resetForm(): void {
-    setMealType('朝');
+    setMealType(getDefaultMealType());
     setInputMode('photo');
     setEstimateMode('api');
     setDatetime(createLocalDatetimeValue());
@@ -158,6 +159,24 @@ function App(): JSX.Element {
     nextServings[index] = Math.max(0.1, Math.round(((nextServings[index] || 1) + delta) * 10) / 10);
     setServings(nextServings);
     setTotal(calculateTotal(items, nextServings));
+    setHasNutrition(true);
+  }
+
+  function updateItemName(index: number, value: string): void {
+    const nextItems = items.map((item, itemIndex) => (
+      itemIndex === index ? { ...item, name: value } : item
+    ));
+    setItems(nextItems);
+    setTotal(calculateTotal(nextItems, servings));
+    setHasNutrition(true);
+  }
+
+  function updateItemNutrition(index: number, key: NutritionKey, value: string): void {
+    const nextItems = items.map((item, itemIndex) => (
+      itemIndex === index ? { ...item, [key]: normalizeNumber(value) } : item
+    ));
+    setItems(nextItems);
+    setTotal(calculateTotal(nextItems, servings));
     setHasNutrition(true);
   }
 
@@ -220,12 +239,13 @@ function App(): JSX.Element {
                 />
               </label>
               <label className="field">
-                <span>メモ</span>
+                <span>画像の補足・訂正</span>
                 <textarea
                   value={photoNote}
-                  placeholder="例: 牛丼並盛、味噌汁"
+                  placeholder="例: 白湯スープではなく豆乳。ご飯は少なめ"
                   onChange={(event) => setPhotoNote(event.target.value)}
                 />
+                <small className="field-hint">この補足は画像と一緒に推定へ渡されます。</small>
               </label>
             </div>
           ) : (
@@ -290,42 +310,54 @@ function App(): JSX.Element {
         <section className="result-panel">
           <div className="calorie-card">
             <span>推定結果</span>
-            <strong>{Math.round(total.calories_kcal || 0)}</strong>
+            <strong>{Math.round(effectiveTotal.calories_kcal || 0)}</strong>
             <em>kcal</em>
           </div>
-          <div className="macro-grid">
-            {nutritionKeys.slice(1).map(({ key, label, unit, step }) => (
-              <label className="macro-card" key={key}>
-                <span>{label}</span>
+          {items.length > 0 ? (
+            <div className="macro-summary" aria-label="品目から再計算したPFC合計">
+              {nutritionKeys.slice(1).map(({ key, label, unit }) => (
+                <span key={key}>
+                  {label} <strong>{effectiveTotal[key]}</strong>{unit}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <>
+              <div className="macro-grid">
+                {nutritionKeys.slice(1).map(({ key, label, unit, step }) => (
+                  <label className="macro-card" key={key}>
+                    <span>{label}</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step={step}
+                      inputMode="decimal"
+                      value={total[key]}
+                      onChange={(event) => {
+                        setTotal({ ...total, [key]: normalizeNumber(event.target.value) });
+                        setHasNutrition(true);
+                      }}
+                    />
+                    <em>{unit}</em>
+                  </label>
+                ))}
+              </div>
+              <label className="calorie-edit">
+                <span>カロリーを調整</span>
                 <input
                   type="number"
                   min="0"
-                  step={step}
-                  inputMode="decimal"
-                  value={total[key]}
+                  step="1"
+                  inputMode="numeric"
+                  value={total.calories_kcal}
                   onChange={(event) => {
-                    setTotal({ ...total, [key]: normalizeNumber(event.target.value) });
+                    setTotal({ ...total, calories_kcal: normalizeNumber(event.target.value) });
                     setHasNutrition(true);
                   }}
                 />
-                <em>{unit}</em>
               </label>
-            ))}
-          </div>
-          <label className="calorie-edit">
-            <span>カロリーを調整</span>
-            <input
-              type="number"
-              min="0"
-              step="1"
-              inputMode="numeric"
-              value={total.calories_kcal}
-              onChange={(event) => {
-                setTotal({ ...total, calories_kcal: normalizeNumber(event.target.value) });
-                setHasNutrition(true);
-              }}
-            />
-          </label>
+            </>
+          )}
         </section>
 
         {items.length > 0 && (
@@ -340,10 +372,32 @@ function App(): JSX.Element {
               {items.map((item, index) => {
                 const serving = servings[index] || 1;
                 return (
-                  <li key={`${item.name}-${index}`}>
-                    <div>
-                      <strong>{item.name}</strong>
+                  <li key={`item-${index}`}>
+                    <div className="item-head">
+                      <label className="field item-name-field">
+                        <span>品名</span>
+                        <input
+                          value={item.name}
+                          onChange={(event) => updateItemName(index, event.target.value)}
+                        />
+                      </label>
                       <span>{Math.round(item.calories_kcal * serving)} kcal</span>
+                    </div>
+                    <div className="item-nutrition-grid">
+                      {nutritionKeys.map(({ key, label, unit, step }) => (
+                        <label className="item-nutrition-field" key={key}>
+                          <span>{label}</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step={step}
+                            inputMode={key === 'calories_kcal' ? 'numeric' : 'decimal'}
+                            value={item[key]}
+                            onChange={(event) => updateItemNutrition(index, key, event.target.value)}
+                          />
+                          <em>{unit}</em>
+                        </label>
+                      ))}
                     </div>
                     {estimateMode === 'api' && (
                       <div className="stepper" aria-label={`${item.name}の人前`}>
@@ -548,6 +602,15 @@ function createLocalDatetimeValue(): string {
   const now = new Date();
   const pad = (value: number) => String(value).padStart(2, '0');
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+}
+
+function getDefaultMealType(date = new Date()): MealType {
+  const hour = date.getHours();
+
+  if (hour >= 5 && hour < 10) return '朝';
+  if (hour >= 10 && hour < 15) return '昼';
+  if (hour >= 17 && hour < 22) return '夜';
+  return '間食';
 }
 
 function formatToday(): string {

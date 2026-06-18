@@ -212,6 +212,14 @@ h2 {
   resize: vertical;
 }
 
+.field-hint {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .field .mono,
 .mono {
   min-height: 148px;
@@ -371,6 +379,30 @@ h2 {
   font-weight: 800;
 }
 
+.macro-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.macro-summary span {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.macro-summary strong {
+  color: var(--ink);
+  font-size: 20px;
+  line-height: 1.1;
+}
+
 .calorie-edit {
   display: grid;
   grid-template-columns: 1fr 120px;
@@ -398,21 +430,61 @@ h2 {
   padding: 12px;
 }
 
-.item-list li > div:first-child {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.item-list strong {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
 .item-list span {
   color: var(--muted);
   font-size: 13px;
+  font-weight: 800;
+}
+
+.item-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+}
+
+.item-name-field input {
+  font-weight: 800;
+}
+
+.item-nutrition-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.item-nutrition-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 10px;
+}
+
+.item-nutrition-field span {
+  grid-column: 1 / -1;
+  font-size: 12px;
+}
+
+.item-nutrition-field input {
+  min-width: 0;
+  width: 100%;
+  min-height: 36px;
+  border: 0;
+  padding: 0;
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 900;
+  outline: none;
+}
+
+.item-nutrition-field em {
+  color: var(--muted);
+  font-style: normal;
+  font-size: 12px;
   font-weight: 800;
 }
 
@@ -507,6 +579,11 @@ h2 {
   }
 
   .macro-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .macro-summary,
+  .item-nutrition-grid {
     grid-template-columns: 1fr;
   }
 }
