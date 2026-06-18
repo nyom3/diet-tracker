@@ -1,7 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { Camera, Check, Clipboard, Loader2, Minus, Plus, Save, Sparkles } from 'lucide-react';
-import { estimateCalories, processInput } from './gasClient';
+import { Camera, Check, Clipboard, History, Loader2, Minus, Plus, RefreshCw, Save, Sparkles, X } from 'lucide-react';
+import { estimateCalories, listRecentMeals, processInput, updateMeal } from './gasClient';
 import type {
   EstimateMode,
   ImagePayload,
@@ -11,6 +11,7 @@ import type {
   NutritionKey,
   NutritionResult,
   NutritionTotal,
+  SavedMeal,
   SaveMealPayload,
 } from './types';
 import './styles.css';
@@ -43,6 +44,9 @@ function App(): JSX.Element {
   const [items, setItems] = React.useState<NutritionItem[]>([]);
   const [servings, setServings] = React.useState<number[]>([]);
   const [hasNutrition, setHasNutrition] = React.useState(false);
+  const [recentMeals, setRecentMeals] = React.useState<SavedMeal[]>([]);
+  const [selectedMealId, setSelectedMealId] = React.useState('');
+  const [loadingRecent, setLoadingRecent] = React.useState(false);
   const [status, setStatus] = React.useState<{ message: string; type?: 'success' | 'error' }>({ message: '' });
   const [busy, setBusy] = React.useState<'estimate' | 'save' | null>(null);
   const [previewUrl, setPreviewUrl] = React.useState('');
@@ -70,6 +74,10 @@ function App(): JSX.Element {
       URL.revokeObjectURL(nextUrl);
     };
   }, [photoFile]);
+
+  React.useEffect(() => {
+    void refreshRecentMeals(false);
+  }, []);
 
   function applyNutrition(result: NutritionResult, enableStepper: boolean): void {
     const nextTotal = normalizeTotal(result.total || result);
@@ -128,10 +136,15 @@ function App(): JSX.Element {
         servings,
       });
       setBusy('save');
-      setStatus({ message: '保存中です。' });
-      await processInput(payload);
+      setStatus({ message: selectedMealId ? '更新中です。' : '保存中です。' });
+      if (selectedMealId) {
+        await updateMeal(selectedMealId, payload);
+      } else {
+        await processInput(payload);
+      }
       resetForm();
-      setStatus({ message: '保存しました。', type: 'success' });
+      await refreshRecentMeals(false);
+      setStatus({ message: selectedMealId ? '更新しました。' : '保存しました。', type: 'success' });
     } catch (error) {
       setStatus({ message: getErrorMessage(error), type: 'error' });
     } finally {
@@ -152,6 +165,7 @@ function App(): JSX.Element {
     setItems([]);
     setServings([]);
     setHasNutrition(false);
+    setSelectedMealId('');
   }
 
   function updateServing(index: number, delta: number): void {
@@ -180,6 +194,47 @@ function App(): JSX.Element {
     setHasNutrition(true);
   }
 
+  async function refreshRecentMeals(showStatus: boolean): Promise<void> {
+    try {
+      setLoadingRecent(true);
+      const meals = await listRecentMeals(10);
+      setRecentMeals(meals);
+      if (showStatus) {
+        setStatus({ message: '最近の記録を更新しました。', type: 'success' });
+      }
+    } catch (error) {
+      if (showStatus) {
+        setStatus({ message: getErrorMessage(error), type: 'error' });
+      }
+    } finally {
+      setLoadingRecent(false);
+    }
+  }
+
+  function loadMealForEdit(meal: SavedMeal): void {
+    const nextItems = parseBreakdownItems(meal.breakdown_json);
+
+    setSelectedMealId(meal.id);
+    setMealType(meal.meal_type);
+    setInputMode('text');
+    setEstimateMode(meal.source === 'manual' ? 'manual' : 'api');
+    setDatetime(createLocalDatetimeValue(new Date(meal.timestamp)));
+    setPhotoFile(null);
+    setPhotoNote('');
+    setMealText(meal.description);
+    setManualJson('');
+    setTotal({
+      calories_kcal: meal.calories_kcal,
+      protein_g: meal.protein_g,
+      fat_g: meal.fat_g,
+      carbs_g: meal.carbs_g,
+    });
+    setItems(nextItems);
+    setServings(nextItems.map(() => 1));
+    setHasNutrition(true);
+    setStatus({ message: '最近の記録を読み込みました。', type: 'success' });
+  }
+
   return (
     <main className="app-shell">
       <header className="app-header">
@@ -190,7 +245,50 @@ function App(): JSX.Element {
         <div className="today-chip">{formatToday()}</div>
       </header>
 
+      <section className="panel recent-panel">
+        <div className="section-heading">
+          <div>
+            <span className="section-label">履歴</span>
+            <h2>最近の記録</h2>
+          </div>
+          <button
+            className="icon-button"
+            type="button"
+            aria-label="最近の記録を更新"
+            onClick={() => void refreshRecentMeals(true)}
+          >
+            {loadingRecent ? <Loader2 className="spin" size={18} /> : <RefreshCw size={18} />}
+          </button>
+        </div>
+        {recentMeals.length > 0 ? (
+          <ul className="recent-list">
+            {recentMeals.map((meal) => (
+              <li key={meal.id}>
+                <button type="button" onClick={() => loadMealForEdit(meal)}>
+                  <History size={18} />
+                  <span>
+                    <strong>{meal.description}</strong>
+                    <em>{formatMealTime(meal.timestamp)} / {meal.meal_type} / {Math.round(meal.calories_kcal)} kcal</em>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="empty-text">GAS Web App 上で最近の記録を読み込みます。</p>
+        )}
+      </section>
+
       <form className="meal-form" onSubmit={handleSave}>
+        {selectedMealId && (
+          <div className="edit-banner">
+            <span>記録を編集中</span>
+            <button type="button" onClick={resetForm}>
+              <X size={16} />
+              解除
+            </button>
+          </div>
+        )}
         <section className="panel compact-panel">
           <SegmentedGroup label="食事タイプ">
             {mealTypes.map((value) => (
@@ -424,7 +522,7 @@ function App(): JSX.Element {
           <p className={`status ${status.type || ''}`} aria-live="polite">{status.message}</p>
           <button className="action-button primary-action" type="submit" disabled={!canSave || busy !== null}>
             {busy === 'save' ? <Loader2 className="spin" size={18} /> : <Save size={18} />}
-            保存
+            {selectedMealId ? '上書き保存' : '保存'}
           </button>
         </div>
       </form>
@@ -601,8 +699,8 @@ function roundToTenth(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
-function createLocalDatetimeValue(): string {
-  const now = new Date();
+function createLocalDatetimeValue(date = new Date()): string {
+  const now = Number.isNaN(date.getTime()) ? new Date() : date;
   const pad = (value: number) => String(value).padStart(2, '0');
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
 }
@@ -618,6 +716,31 @@ function getDefaultMealType(date = new Date()): MealType {
 
 function formatToday(): string {
   return new Intl.DateTimeFormat('ja-JP', { month: 'numeric', day: 'numeric', weekday: 'short' }).format(new Date());
+}
+
+function formatMealTime(timestamp: string): string {
+  const date = new Date(timestamp);
+
+  if (Number.isNaN(date.getTime())) {
+    return timestamp;
+  }
+
+  return new Intl.DateTimeFormat('ja-JP', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+}
+
+function parseBreakdownItems(breakdownJson: string): NutritionItem[] {
+  try {
+    const parsed = JSON.parse(breakdownJson);
+    const rawItems = Array.isArray(parsed) ? parsed : parsed.items;
+    return Array.isArray(rawItems) ? rawItems.map(normalizeItem) : [];
+  } catch {
+    return [];
+  }
 }
 
 function getErrorMessage(error: unknown): string {
