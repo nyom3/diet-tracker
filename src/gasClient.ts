@@ -1,4 +1,4 @@
-import type { NutritionResult, SavedMeal, SaveMealPayload } from './types';
+import type { DailyFeedback, NutritionResult, SavedMeal, SaveMealPayload, TodaySummary } from './types';
 
 declare global {
   interface Window {
@@ -17,6 +17,8 @@ type GoogleScriptRun = {
   processInput: (payload: SaveMealPayload) => void;
   listRecentMeals: (limit: number) => void;
   updateMeal: (id: string, payload: SaveMealPayload) => void;
+  getTodaySummary: () => void;
+  summarizeTodayFeedback: () => void;
 };
 
 export function estimateCalories(
@@ -44,6 +46,18 @@ export function listRecentMeals(limit: number): Promise<SavedMeal[]> {
 export function updateMeal(id: string, payload: SaveMealPayload): Promise<{ ok: boolean; id: string }> {
   return callGas<{ ok: boolean; id: string }>((runner) => {
     runner.updateMeal(id, payload);
+  });
+}
+
+export function getTodaySummary(): Promise<TodaySummary> {
+  return callGas<TodaySummary>((runner) => {
+    runner.getTodaySummary();
+  });
+}
+
+export function summarizeTodayFeedback(): Promise<DailyFeedback> {
+  return callGas<DailyFeedback>((runner) => {
+    runner.summarizeTodayFeedback();
   });
 }
 

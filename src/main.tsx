@@ -1,8 +1,30 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { Camera, Check, Clipboard, History, Loader2, Minus, Plus, RefreshCw, Save, Sparkles, X } from 'lucide-react';
-import { estimateCalories, listRecentMeals, processInput, updateMeal } from './gasClient';
+import {
+  Camera,
+  Check,
+  Clipboard,
+  History,
+  Loader2,
+  MessageCircle,
+  Minus,
+  Plus,
+  RefreshCw,
+  Save,
+  Sparkles,
+  Zap,
+  X,
+} from 'lucide-react';
+import {
+  estimateCalories,
+  getTodaySummary,
+  listRecentMeals,
+  processInput,
+  summarizeTodayFeedback,
+  updateMeal,
+} from './gasClient';
 import type {
+  DailyFeedback,
   EstimateMode,
   ImagePayload,
   InputMode,
@@ -13,6 +35,7 @@ import type {
   NutritionTotal,
   SavedMeal,
   SaveMealPayload,
+  TodaySummary,
 } from './types';
 import './styles.css';
 
@@ -45,10 +68,12 @@ function App(): JSX.Element {
   const [servings, setServings] = React.useState<number[]>([]);
   const [hasNutrition, setHasNutrition] = React.useState(false);
   const [recentMeals, setRecentMeals] = React.useState<SavedMeal[]>([]);
+  const [todaySummary, setTodaySummary] = React.useState<TodaySummary | null>(null);
+  const [dailyFeedback, setDailyFeedback] = React.useState<DailyFeedback | null>(null);
   const [selectedMealId, setSelectedMealId] = React.useState('');
   const [loadingRecent, setLoadingRecent] = React.useState(false);
   const [status, setStatus] = React.useState<{ message: string; type?: 'success' | 'error' }>({ message: '' });
-  const [busy, setBusy] = React.useState<'estimate' | 'save' | null>(null);
+  const [busy, setBusy] = React.useState<'estimate' | 'save' | 'quick' | 'feedback' | null>(null);
   const [previewUrl, setPreviewUrl] = React.useState('');
 
   const description = inputMode === 'photo'
@@ -76,7 +101,7 @@ function App(): JSX.Element {
   }, [photoFile]);
 
   React.useEffect(() => {
-    void refreshRecentMeals(false);
+    void refreshDashboard(false);
   }, []);
 
   function applyNutrition(result: NutritionResult, enableStepper: boolean): void {
@@ -143,7 +168,7 @@ function App(): JSX.Element {
         await processInput(payload);
       }
       resetForm();
-      await refreshRecentMeals(false);
+      await refreshDashboard(false);
       setStatus({ message: selectedMealId ? '更新しました。' : '保存しました。', type: 'success' });
     } catch (error) {
       setStatus({ message: getErrorMessage(error), type: 'error' });
@@ -194,17 +219,23 @@ function App(): JSX.Element {
     setHasNutrition(true);
   }
 
-  async function refreshRecentMeals(showStatus: boolean): Promise<void> {
+  async function refreshDashboard(showStatus: boolean): Promise<void> {
     try {
       setLoadingRecent(true);
-      const meals = await listRecentMeals(10);
+      const [meals, summary] = await Promise.all([
+        listRecentMeals(10),
+        getTodaySummary(),
+      ]);
       setRecentMeals(meals);
+      setTodaySummary(summary);
       if (showStatus) {
-        setStatus({ message: '最近の記録を更新しました。', type: 'success' });
+        setStatus({ message: '記録状況を更新しました。', type: 'success' });
       }
     } catch (error) {
       if (showStatus) {
         setStatus({ message: getErrorMessage(error), type: 'error' });
+      } else {
+        console.warn('記録状況の読み込みに失敗しました:', error);
       }
     } finally {
       setLoadingRecent(false);
@@ -235,6 +266,39 @@ function App(): JSX.Element {
     setStatus({ message: '最近の記録を読み込みました。', type: 'success' });
   }
 
+  async function handleQuickRegister(meal: SavedMeal): Promise<void> {
+    try {
+      setBusy('quick');
+      setStatus({ message: 'クイック登録中です。' });
+      await processInput(buildQuickPayload(meal));
+      await refreshDashboard(false);
+      setStatus({ message: 'クイック登録しました。', type: 'success' });
+    } catch (error) {
+      setStatus({ message: getErrorMessage(error), type: 'error' });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleDailyFeedback(): Promise<void> {
+    try {
+      setBusy('feedback');
+      setStatus({ message: 'コメントを取得中です。' });
+      const feedback = await summarizeTodayFeedback();
+      setDailyFeedback(feedback);
+      setTodaySummary({
+        date: feedback.date,
+        count: feedback.count,
+        total: feedback.total,
+      });
+      setStatus({ message: 'コメントを取得しました。', type: 'success' });
+    } catch (error) {
+      setStatus({ message: getErrorMessage(error), type: 'error' });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <main className="app-shell">
       <header className="app-header">
@@ -244,6 +308,30 @@ function App(): JSX.Element {
         </div>
         <div className="today-chip">{formatToday()}</div>
       </header>
+
+      <section className="panel today-panel">
+        <div>
+          <span className="section-label">今日</span>
+          <h2>
+            {Math.round(todaySummary?.total.calories_kcal || 0)} kcal
+            <small>
+              P{todaySummary?.total.protein_g || 0} / F{todaySummary?.total.fat_g || 0} / C{todaySummary?.total.carbs_g || 0}
+            </small>
+          </h2>
+        </div>
+        <button
+          className="action-button secondary-action feedback-action"
+          type="button"
+          disabled={busy !== null || !todaySummary?.count}
+          onClick={handleDailyFeedback}
+        >
+          {busy === 'feedback' ? <Loader2 className="spin" size={18} /> : <MessageCircle size={18} />}
+          コメント
+        </button>
+        {dailyFeedback && (
+          <p className="feedback-text">{dailyFeedback.feedback}</p>
+        )}
+      </section>
 
       <section className="panel recent-panel">
         <div className="section-heading">
@@ -255,7 +343,7 @@ function App(): JSX.Element {
             className="icon-button"
             type="button"
             aria-label="最近の記録を更新"
-            onClick={() => void refreshRecentMeals(true)}
+            onClick={() => void refreshDashboard(true)}
           >
             {loadingRecent ? <Loader2 className="spin" size={18} /> : <RefreshCw size={18} />}
           </button>
@@ -264,12 +352,21 @@ function App(): JSX.Element {
           <ul className="recent-list">
             {recentMeals.map((meal) => (
               <li key={meal.id}>
-                <button type="button" onClick={() => loadMealForEdit(meal)}>
+                <button className="recent-edit-button" type="button" onClick={() => loadMealForEdit(meal)}>
                   <History size={18} />
                   <span>
                     <strong>{meal.description}</strong>
                     <em>{formatMealTime(meal.timestamp)} / {meal.meal_type} / {Math.round(meal.calories_kcal)} kcal</em>
                   </span>
+                </button>
+                <button
+                  className="quick-register-button"
+                  type="button"
+                  disabled={busy !== null}
+                  onClick={() => void handleQuickRegister(meal)}
+                >
+                  {busy === 'quick' ? <Loader2 className="spin" size={16} /> : <Zap size={16} />}
+                  登録
                 </button>
               </li>
             ))}
@@ -602,6 +699,20 @@ function buildPayload({
     carbs_g: total.carbs_g,
     source: estimateMode,
     breakdown_json: JSON.stringify(applyServings(items, servings)),
+  };
+}
+
+function buildQuickPayload(meal: SavedMeal): SaveMealPayload {
+  return {
+    timestamp: new Date().toISOString(),
+    meal_type: getDefaultMealType(),
+    description: meal.description,
+    calories_kcal: meal.calories_kcal,
+    protein_g: meal.protein_g,
+    fat_g: meal.fat_g,
+    carbs_g: meal.carbs_g,
+    source: 'manual',
+    breakdown_json: meal.breakdown_json,
   };
 }
 

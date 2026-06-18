@@ -98,6 +98,60 @@ function updateMeal(id, data) {
   return { ok: true, id: mealId };
 }
 
+function getTodaySummary() {
+  const meals = listMealsForTodayUntil(new Date());
+  const total = sumMeals(meals);
+
+  return {
+    date: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd'),
+    count: meals.length,
+    total: total,
+  };
+}
+
+function summarizeTodayFeedback() {
+  const meals = listMealsForTodayUntil(new Date());
+
+  if (meals.length === 0) {
+    throw new Error('今日の食事記録がまだありません。');
+  }
+
+  const total = sumMeals(meals);
+  const mealLines = meals.map(function (meal) {
+    return [
+      meal.meal_type,
+      meal.description,
+      Math.round(meal.calories_kcal) + 'kcal',
+      'P' + meal.protein_g + 'g',
+      'F' + meal.fat_g + 'g',
+      'C' + meal.carbs_g + 'g',
+    ].join(' / ');
+  });
+
+  const prompt =
+    'あなたは食事記録を見て短く実用的にコメントする栄養士です。\n' +
+    '評価時点までの今日の食事だけを対象に、食べ過ぎ傾向・ヘルシーさ・次の一食の提案を日本語で3文以内にまとめてください。\n' +
+    '断定しすぎず、医療助言ではなく一般的な食事コメントとして書いてください。\n\n' +
+    '合計: ' +
+    Math.round(total.calories_kcal) +
+    'kcal / P' +
+    total.protein_g +
+    'g / F' +
+    total.fat_g +
+    'g / C' +
+    total.carbs_g +
+    'g\n' +
+    '食事:\n- ' +
+    mealLines.join('\n- ');
+
+  return {
+    date: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd'),
+    count: meals.length,
+    total: total,
+    feedback: callGeminiText(prompt),
+  };
+}
+
 function estimateCalories(inputText, imageBase64, imageMimeType) {
   const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
 
@@ -170,6 +224,59 @@ function estimateCalories(inputText, imageBase64, imageMimeType) {
   }
 
   return normalizeNutritionResult(JSON.parse(extractJson(responseText)), text || '画像の食事');
+}
+
+function callGeminiText(prompt) {
+  const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
+
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY が設定されていません。');
+  }
+
+  const text = String(prompt || '').trim();
+
+  if (!text) {
+    throw new Error('Gemini に送る内容が空です。');
+  }
+
+  const response = UrlFetchApp.fetch(GEMINI_ENDPOINT + '?key=' + encodeURIComponent(apiKey), {
+    method: 'post',
+    contentType: 'application/json',
+    muteHttpExceptions: true,
+    payload: JSON.stringify({
+      contents: [
+        {
+          role: 'user',
+          parts: [{ text: text }],
+        },
+      ],
+      generationConfig: {
+        temperature: 0.3,
+      },
+    }),
+  });
+
+  const statusCode = response.getResponseCode();
+  const body = response.getContentText();
+
+  if (statusCode < 200 || statusCode >= 300) {
+    throw new Error('Gemini API の呼び出しに失敗しました。status=' + statusCode);
+  }
+
+  const payload = JSON.parse(body);
+  const responseText =
+    payload.candidates &&
+    payload.candidates[0] &&
+    payload.candidates[0].content &&
+    payload.candidates[0].content.parts &&
+    payload.candidates[0].content.parts[0] &&
+    payload.candidates[0].content.parts[0].text;
+
+  if (!responseText) {
+    throw new Error('Gemini API の応答が空です。');
+  }
+
+  return String(responseText).trim();
 }
 
 function getFoodLogSheet() {
@@ -265,6 +372,52 @@ function rowToFoodLog(row) {
     source: String(row[8] || '').trim(),
     breakdown_json: String(row[9] || '').trim(),
   };
+}
+
+function listMealsForTodayUntil(now) {
+  const sheet = getFoodLogSheet();
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow < 2) {
+    return [];
+  }
+
+  const timezone = Session.getScriptTimeZone();
+  const today = Utilities.formatDate(now, timezone, 'yyyy-MM-dd');
+  const values = sheet.getRange(2, 1, lastRow - 1, FOOD_LOG_HEADERS.length).getValues();
+
+  return values
+    .map(function (row) {
+      return rowToFoodLog(row);
+    })
+    .filter(function (meal) {
+      const timestamp = new Date(meal.timestamp);
+
+      if (isNaN(timestamp.getTime()) || timestamp.getTime() > now.getTime()) {
+        return false;
+      }
+
+      return Utilities.formatDate(timestamp, timezone, 'yyyy-MM-dd') === today;
+    });
+}
+
+function sumMeals(meals) {
+  return meals.reduce(
+    function (sum, meal) {
+      return {
+        calories_kcal: Math.round(sum.calories_kcal + meal.calories_kcal),
+        protein_g: roundToTenth(sum.protein_g + meal.protein_g),
+        fat_g: roundToTenth(sum.fat_g + meal.fat_g),
+        carbs_g: roundToTenth(sum.carbs_g + meal.carbs_g),
+      };
+    },
+    {
+      calories_kcal: 0,
+      protein_g: 0,
+      fat_g: 0,
+      carbs_g: 0,
+    },
+  );
 }
 
 function createMealId() {
@@ -366,6 +519,10 @@ function toNonNegativeNumber(value, label) {
   }
 
   return numberValue;
+}
+
+function roundToTenth(value) {
+  return Math.round(value * 10) / 10;
 }
 
 function extractJson(text) {

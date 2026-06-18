@@ -109,6 +109,41 @@ h2 {
   margin-bottom: 12px;
 }
 
+.today-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.today-panel h2 {
+  display: grid;
+  gap: 3px;
+  font-size: 30px;
+}
+
+.today-panel small {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.feedback-action {
+  width: auto;
+  min-width: 118px;
+}
+
+.feedback-text {
+  grid-column: 1 / -1;
+  margin: 0;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+}
+
 .panel,
 .result-panel {
   border: 1px solid rgba(221, 228, 216, 0.9);
@@ -326,7 +361,13 @@ h2 {
   list-style: none;
 }
 
-.recent-list button {
+.recent-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.recent-edit-button {
   display: grid;
   width: 100%;
   grid-template-columns: 24px minmax(0, 1fr);
@@ -340,24 +381,39 @@ h2 {
   text-align: left;
 }
 
-.recent-list span {
+.recent-edit-button span {
   display: grid;
   min-width: 0;
   gap: 2px;
 }
 
-.recent-list strong {
+.recent-edit-button strong {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 14px;
 }
 
-.recent-list em {
+.recent-edit-button em {
   color: var(--muted);
   font-style: normal;
   font-size: 12px;
   font-weight: 800;
+}
+
+.quick-register-button {
+  display: inline-flex;
+  min-width: 74px;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid rgba(36, 107, 72, 0.22);
+  border-radius: 8px;
+  background: rgba(216, 240, 122, 0.34);
+  color: var(--primary);
+  padding: 0 10px;
+  font-weight: 900;
 }
 
 .empty-text {
@@ -672,6 +728,15 @@ h2 {
   }
 
   .mode-switch {
+    width: 100%;
+  }
+
+  .today-panel,
+  .recent-list li {
+    grid-template-columns: 1fr;
+  }
+
+  .feedback-action {
     width: 100%;
   }
 

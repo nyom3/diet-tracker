@@ -44,6 +44,16 @@ export type SavedMeal = SaveMealPayload & {
   carbs_g: number;
 };
 
+export type TodaySummary = {
+  date: string;
+  count: number;
+  total: NutritionTotal;
+};
+
+export type DailyFeedback = TodaySummary & {
+  feedback: string;
+};
+
 export type ImagePayload = {
   base64: string;
   mimeType: string;
