@@ -6,6 +6,7 @@ const GEMINI_ENDPOINT =
   ':generateContent';
 
 const FOOD_LOG_HEADERS = [
+  'id',
   'timestamp',
   'meal_type',
   'description',
@@ -26,8 +27,10 @@ function doGet() {
 function processInput(data) {
   const input = validateFoodLogInput(data);
   const sheet = getFoodLogSheet();
+  const id = createMealId();
 
   sheet.appendRow([
+    id,
     input.timestamp,
     input.meal_type,
     input.description,
@@ -39,7 +42,60 @@ function processInput(data) {
     input.breakdown_json,
   ]);
 
-  return { ok: true };
+  return { ok: true, id: id };
+}
+
+function listRecentMeals(limit) {
+  const sheet = getFoodLogSheet();
+  const lastRow = sheet.getLastRow();
+  const count = Math.min(Math.max(Number(limit) || 10, 1), 50);
+
+  if (lastRow < 2) {
+    return [];
+  }
+
+  const startRow = Math.max(2, lastRow - count + 1);
+  const values = sheet.getRange(startRow, 1, lastRow - startRow + 1, FOOD_LOG_HEADERS.length).getValues();
+
+  return values
+    .map(function (row) {
+      return rowToFoodLog(row);
+    })
+    .filter(function (meal) {
+      return meal.id;
+    })
+    .reverse();
+}
+
+function updateMeal(id, data) {
+  const mealId = String(id || '').trim();
+
+  if (!mealId) {
+    throw new Error('更新対象のidが不正です。');
+  }
+
+  const input = validateFoodLogInput(data);
+  const sheet = getFoodLogSheet();
+  const rowIndex = findFoodLogRowById(sheet, mealId);
+
+  if (rowIndex < 0) {
+    throw new Error('更新対象の食事記録が見つかりません。');
+  }
+
+  sheet.getRange(rowIndex, 1, 1, FOOD_LOG_HEADERS.length).setValues([[
+    mealId,
+    input.timestamp,
+    input.meal_type,
+    input.description,
+    input.calories_kcal,
+    input.protein_g,
+    input.fat_g,
+    input.carbs_g,
+    input.source,
+    input.breakdown_json,
+  ]]);
+
+  return { ok: true, id: mealId };
 }
 
 function estimateCalories(inputText, imageBase64, imageMimeType) {
@@ -132,15 +188,87 @@ function getFoodLogSheet() {
 }
 
 function ensureFoodLogHeaders(sheet) {
+  const lastColumn = Math.max(sheet.getLastColumn(), FOOD_LOG_HEADERS.length);
+  const currentHeaders = sheet.getRange(1, 1, 1, lastColumn).getValues()[0];
+  const hasLegacyHeaders = currentHeaders[0] === 'timestamp';
+
+  if (hasLegacyHeaders) {
+    sheet.insertColumnBefore(1);
+  }
+
   const headerRange = sheet.getRange(1, 1, 1, FOOD_LOG_HEADERS.length);
-  const currentHeaders = headerRange.getValues()[0];
+  const nextHeaders = headerRange.getValues()[0];
   const shouldWriteHeaders = FOOD_LOG_HEADERS.some(function (header, index) {
-    return currentHeaders[index] !== header;
+    return nextHeaders[index] !== header;
   });
 
   if (shouldWriteHeaders) {
     headerRange.setValues([FOOD_LOG_HEADERS]);
   }
+
+  backfillFoodLogIds(sheet);
+}
+
+function backfillFoodLogIds(sheet) {
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow < 2) {
+    return;
+  }
+
+  const idRange = sheet.getRange(2, 1, lastRow - 1, 1);
+  const ids = idRange.getValues();
+  var changed = false;
+
+  const nextIds = ids.map(function (row) {
+    if (String(row[0] || '').trim()) {
+      return row;
+    }
+
+    changed = true;
+    return [createMealId()];
+  });
+
+  if (changed) {
+    idRange.setValues(nextIds);
+  }
+}
+
+function findFoodLogRowById(sheet, id) {
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow < 2) {
+    return -1;
+  }
+
+  const ids = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+
+  for (var index = 0; index < ids.length; index += 1) {
+    if (String(ids[index][0] || '').trim() === id) {
+      return index + 2;
+    }
+  }
+
+  return -1;
+}
+
+function rowToFoodLog(row) {
+  return {
+    id: String(row[0] || '').trim(),
+    timestamp: row[1] instanceof Date ? row[1].toISOString() : String(row[1] || '').trim(),
+    meal_type: String(row[2] || '').trim(),
+    description: String(row[3] || '').trim(),
+    calories_kcal: toNonNegativeNumber(row[4], 'カロリー'),
+    protein_g: toNonNegativeNumber(row[5], 'タンパク質'),
+    fat_g: toNonNegativeNumber(row[6], '脂質'),
+    carbs_g: toNonNegativeNumber(row[7], '炭水化物'),
+    source: String(row[8] || '').trim(),
+    breakdown_json: String(row[9] || '').trim(),
+  };
+}
+
+function createMealId() {
+  return 'meal_' + Utilities.getUuid();
 }
 
 function validateFoodLogInput(data) {

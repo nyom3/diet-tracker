@@ -36,6 +36,14 @@ export type SaveMealPayload = {
   breakdown_json: string;
 };
 
+export type SavedMeal = SaveMealPayload & {
+  id: string;
+  calories_kcal: number;
+  protein_g: number;
+  fat_g: number;
+  carbs_g: number;
+};
+
 export type ImagePayload = {
   base64: string;
   mimeType: string;

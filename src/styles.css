@@ -105,6 +105,10 @@ h2 {
   gap: 12px;
 }
 
+.recent-panel {
+  margin-bottom: 12px;
+}
+
 .panel,
 .result-panel {
   border: 1px solid rgba(221, 228, 216, 0.9);
@@ -301,6 +305,93 @@ h2 {
 .manual-box {
   display: grid;
   gap: 10px;
+}
+
+.icon-button {
+  display: grid;
+  min-width: 44px;
+  min-height: 44px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--ink);
+}
+
+.recent-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.recent-list button {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 10px;
+  color: var(--ink);
+  text-align: left;
+}
+
+.recent-list span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.recent-list strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+
+.recent-list em {
+  color: var(--muted);
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.empty-text {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.edit-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid rgba(36, 107, 72, 0.22);
+  border-radius: 8px;
+  background: rgba(216, 240, 122, 0.28);
+  padding: 10px 12px;
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.edit-banner button {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(36, 107, 72, 0.24);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  padding: 0 10px;
+  font-weight: 900;
 }
 
 .result-panel {
