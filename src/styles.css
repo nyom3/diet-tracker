@@ -446,9 +446,8 @@ h2 {
   display: grid;
   gap: 8px;
   border-top: 1px solid var(--line);
-  background: rgba(246, 247, 242, 0.92);
+  background: #f6f7f2;
   padding: 10px max(12px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
-  backdrop-filter: blur(16px);
 }
 
 .sticky-actions .primary-action {
