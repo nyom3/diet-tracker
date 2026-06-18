@@ -488,6 +488,12 @@ h2 {
   font-weight: 800;
 }
 
+.item-serving-hint {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .stepper {
   display: grid;
   grid-template-columns: 44px 1fr 44px;

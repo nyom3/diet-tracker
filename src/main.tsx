@@ -386,7 +386,7 @@ function App(): JSX.Element {
                     <div className="item-nutrition-grid">
                       {nutritionKeys.map(({ key, label, unit, step }) => (
                         <label className="item-nutrition-field" key={key}>
-                          <span>{label}</span>
+                          <span>{label}（1人前）</span>
                           <input
                             type="number"
                             min="0"
@@ -399,6 +399,9 @@ function App(): JSX.Element {
                         </label>
                       ))}
                     </div>
+                    <small className="item-serving-hint">
+                      入力値は1人前あたり。現在の合計は {Math.round(item.calories_kcal * serving)} kcal です。
+                    </small>
                     {estimateMode === 'api' && (
                       <div className="stepper" aria-label={`${item.name}の人前`}>
                         <button type="button" onClick={() => updateServing(index, -0.1)}>
