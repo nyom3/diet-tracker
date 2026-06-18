@@ -1,0 +1,83 @@
+# diet-tracker 不変条件 正本（single source of truth）
+# skill(invariant-preflight / invariant-review)はこのファイルを読むだけの薄い driver。
+# 本文の複製を AGENTS.md 等に作らない。AGENTS.md からは ID で参照する。
+
+- id: SECRET_IN_SCRIPT_PROPERTIES
+  statement: API キー等の秘密は PropertiesService 経由でのみ取得し、コード・ログ・フロントに平文を出さない
+  severity: critical
+  triggers: [Gemini呼び出し変更, 認証情報の取得, スクリプトプロパティ参照変更, ログ出力追加, 新規外部API追加]
+  rationale: 秘密のハードコードやログ流出は API キー漏洩とスプレッドシート乗っ取りに直結する
+  check: GEMINI_API_KEY / SPREADSHEET_ID 等が PropertiesService.getScriptProperties().getProperty 経由でのみ取得され、コードリテラル・Logger/console 出力・google.script.run の戻り値に平文の秘密が混入していない
+  ref: AGENTS.md
+
+- id: DATA_SHEETS_ONLY
+  statement: 食事データは本人のスプレッドシートのみに保存し、外部サービスへ送信しない
+  severity: critical
+  triggers: [保存フロー変更, 新規外部送信追加, UrlFetchApp追加, 書き込み先変更, 連携先追加, FB/集計機能追加]
+  rationale: BYOD・コンプラ前提のため、食事内容や PFC の外部送信・外部保持は許容できない
+  check: 食事データの書き込み先が getFoodLogSheet() の Sheets のみで、UrlFetchApp.fetch の宛先が Gemini 推定エンドポイント以外に増えておらず、食事内容/PFC/画像が外部ストレージや解析サービスへ送信されていない
+  ref: AGENTS.md
+
+- id: GEMINI_USER_INITIATED_ONLY
+  statement: Gemini 呼び出しはユーザーアクション起点のみとし、背景・定期実行から呼ばない
+  severity: critical
+  triggers: [Gemini呼び出し追加, トリガー設定追加, 時間主導トリガー, onEdit/onOpen追加, FB/まとめ評価機能追加]
+  rationale: 背景の自動呼び出しはコスト・プライバシー・意図しない API 消費の温床になる
+  check: Gemini を呼ぶ関数(estimateCalories や #3 の summarize 系)へ到達する起動経路が google.script.run によるユーザー操作のみで、ScriptApp.newTrigger・時間主導・onEdit・onOpen 等の自動起点から Gemini 呼び出しに到達しない
+  ref: AGENTS.md
+
+- id: GEMINI_API_BOUNDARY
+  statement: Gemini 接続は GAS サーバ側に集約し、フロントは API キーを持たず Gemini を直接呼ばない。入力検証をサーバ境界で維持する
+  severity: critical
+  triggers: [AI呼び出し追加, フロント変更, gasClient変更, 入力検証変更, 新AI機能追加, プロンプト変更]
+  rationale: AI 接続と検証をサーバ境界に集約することで秘密と入力制約を守る
+  check: src/ 配下が generativelanguage エンドポイントや GEMINI_API_KEY を参照せず、Gemini への UrlFetchApp.fetch が Code.gs のサーバ関数内のみに存在し、フロントの GAS 呼び出しが gasClient.ts に集約され、estimateCalories の空入力拒否等の検証が削除されていない
+  ref: AGENTS.md
+
+- id: SERVER_SIDE_WRITE_VALIDATION
+  statement: Sheets への書き込み・更新はサーバ側で型・必須・非負を検証してから行う
+  severity: critical
+  triggers: [保存API変更, 新規書き込みAPI追加, updateMeal追加, バリデーション変更, スキーマ変更]
+  rationale: フロント値を無検証で書き込むと不正データや既存行の破壊を招く
+  check: Sheets に行を追加/更新するサーバ関数(processInput および #1 で追加する updateMeal 等)が appendRow/setValues の前に validateFoodLogInput 相当の timestamp/meal_type/source 検証と toNonNegativeNumber による PFC 非負検証を通しており、フロント値を無検証で書き込んでいない
+  ref: AGENTS.md
+
+- id: IMAGE_NOT_PERSISTED
+  statement: 食事画像は永続化しない（Sheets セル・Drive・外部ストレージのいずれにも保存しない）
+  severity: critical
+  triggers: [画像処理変更, 保存フロー変更, DriveApp追加, 画像列追加, 補正(#2)機能変更]
+  rationale: 画像は推定の一時入力に限定する設計判断。永続化はデータ範囲拡大と漏洩面の増加を招く
+  check: 画像のバイト列/データURLが Sheets セル・DriveApp・外部ストレージのいずれにも書き込まれず、画像は estimateCalories へのリクエスト内でのみ使われ、推定応答後に保持・記録されていない
+  ref: AGENTS.md
+
+- id: WEBAPP_ACCESS_SCOPE
+  statement: Web App のアクセス範囲は本人のみ、実行者は配備者を維持する
+  severity: critical
+  triggers: [appsscript.json変更, webapp設定変更, デプロイ設定変更, アクセス範囲変更]
+  rationale: アクセス範囲の拡大は本人専用の食事データを第三者に露出させる
+  check: gas/appsscript.json の webapp.access が "MYSELF"、executeAs が "USER_DEPLOYING" を維持し、ANYONE / ANYONE_ANONYMOUS へ拡大していない
+  ref: AGENTS.md
+
+- id: SCHEMA_CONTRACT
+  statement: food_log の列契約を変更するときは読み書き双方・docs・既存データ移行への影響を明示する
+  severity: normal
+  triggers: [food_logスキーマ変更, FOOD_LOG_HEADERS変更, id列追加(#1), breakdown_json構造変更, 列の追加削除]
+  rationale: 列順やヘッダの変更は読み出し/書き込み・既存データ・ダッシュボードに波及する
+  check: FOOD_LOG_HEADERS や列順を変更する diff で ensureFoodLogHeaders と読み書き双方(processInput / 追加する updateMeal・listRecentMeals)・AGENTS.md のスキーマ表が整合し、既存データの移行方針(id 後埋め等)が明示されている
+  ref: AGENTS.md
+
+- id: SECRETS_NOT_COMMITTED
+  statement: .clasp.json・local/・.review-inbox を git/PR/remote に含めない
+  severity: normal
+  triggers: [gitignore変更, clasp設定変更, PR作成, local/配下変更, デプロイ手順変更]
+  rationale: scriptId/deploymentId やローカル作業メモの公開は構成情報の漏洩・混乱につながる
+  check: .gitignore が .clasp.json / local/ / .review-inbox を除外し続け、scriptId・deploymentId や local/ の作業メモが追跡対象や PR 差分に混入していない
+  ref: AGENTS.md
+
+- id: GAS_WEBAPP_TOP_TARGET
+  statement: Vite テンプレートの <head> に <base target="_top"> を維持する
+  severity: normal
+  triggers: [index.htmlテンプレート変更, head変更, Viteビルド設定変更]
+  rationale: GAS Web App は iframe 配信のため、_top 指定が無いとリンク遷移がフレーム内に閉じ操作が壊れる
+  check: ビルド元 index.html の <head> に <base target="_top"> が維持され、生成物 gas/index.html にも反映されている
+  ref: AGENTS.md
