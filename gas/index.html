@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <base target="_top">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>食事記録</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f2f3ef;
+        --surface: #ffffff;
+        --text: #18201a;
+        --muted: #6b7268;
+        --line: #e2e6dd;
+        --primary: #1e6342;
+        --primary-ink: #ffffff;
+        --accent: #f1b84b;
+        --danger: #b2362d;
+        --radius: 12px;
+        --radius-lg: 20px;
+        --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 16px rgba(0, 0, 0, 0.05);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--bg);
+        color: var(--text);
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.5;
+      }
+
+      main {
+        width: min(90%, 660px);
+        margin: 0 auto;
+        padding: 24px 0 48px;
+      }
+
+      @media (hover: none) and (pointer: coarse) {
+        main {
+          width: 90%;
+          max-width: none;
+        }
+      }
+
+      h1 {
+        margin: 0 0 24px;
+        padding: 0 4px;
+        font-size: 28px;
+        font-weight: 800;
+        letter-spacing: 0;
+      }
+
+      fieldset,
+      section {
+        margin: 0;
+        padding: 0;
+        border: 0;
+      }
+
+      .card {
+        background: var(--surface);
+        border-radius: 12px;
+        box-shadow: var(--card-shadow);
+        padding: 18px 16px;
+        margin: 0 4px 8px;
+      }
+
+      legend,
+      .label {
+        display: block;
+        margin: 0 0 8px;
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .segmented {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 2px;
+        background: var(--bg);
+        border-radius: 10px;
+        padding: 4px;
+      }
+
+      .segmented.two {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .choice {
+        position: relative;
+        min-height: 44px;
+      }
+
+      .choice input {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+      }
+
+      .choice span {
+        display: flex;
+        min-height: 44px;
+        align-items: center;
+        justify-content: center;
+        border: none;
+        border-radius: 8px;
+        background: transparent;
+        font-size: 14px;
+        font-weight: 600;
+        transition: background 0.15s ease, color 0.15s ease;
+      }
+
+      .choice input:checked + span {
+        background: var(--surface);
+        color: var(--primary);
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+      }
+
+      .field {
+        margin: 0 0 14px;
+      }
+
+      textarea,
+      input[type="text"],
+      input[type="number"],
+      input[type="datetime-local"],
+      input[type="file"] {
+        width: 100%;
+        min-height: 44px;
+        border: 1.5px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+        color: var(--text);
+        font: inherit;
+        transition: border-color 0.15s ease, box-shadow 0.15s ease;
+      }
+
+      textarea,
+      input[type="text"],
+      input[type="datetime-local"],
+      input[type="number"] {
+        padding: 11px 12px;
+      }
+
+      textarea {
+        min-height: 112px;
+        resize: vertical;
+      }
+
+      input[type="file"] {
+        padding: 9px;
+      }
+
+      textarea:focus,
+      input[type="text"]:focus,
+      input[type="number"]:focus,
+      input[type="datetime-local"]:focus,
+      input[type="file"]:focus {
+        outline: none;
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px rgba(33, 107, 72, 0.12);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      button {
+        min-height: 48px;
+        width: 100%;
+        border: 0;
+        border-radius: var(--radius);
+        padding: 12px 14px;
+        font: inherit;
+        font-weight: 750;
+      }
+
+      button.primary {
+        background: var(--primary);
+        color: var(--primary-ink);
+        border-radius: 14px;
+        font-size: 16px;
+        font-weight: 800;
+        letter-spacing: 0.01em;
+        box-shadow: 0 2px 8px rgba(33, 107, 72, 0.25);
+        transition: opacity 0.15s ease, box-shadow 0.15s ease;
+      }
+
+      button.secondary {
+        border: 1.5px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+        color: var(--text);
+        font-weight: 700;
+        transition: background 0.12s ease, border-color 0.12s ease;
+      }
+
+      button.primary:active {
+        opacity: 0.88;
+        box-shadow: none;
+      }
+
+      button.secondary:active {
+        background: var(--bg);
+        border-color: #b0b8ab;
+      }
+
+      button:disabled {
+        cursor: wait;
+        opacity: 0.64;
+      }
+
+      .prompt-box {
+        display: grid;
+        gap: 10px;
+      }
+
+      .prompt {
+        min-height: 150px;
+        background: #fbfcf8;
+        font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+        font-size: 13px;
+      }
+
+      .breakdown {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .breakdown li {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+        border-bottom: 1px solid var(--line);
+        padding: 6px 0;
+        font-size: 14px;
+        color: var(--muted);
+      }
+
+      .breakdown li:last-child {
+        border-bottom: none;
+      }
+
+      .breakdown .item-name {
+        min-width: 0;
+        flex: 1 1 120px;
+        overflow-wrap: anywhere;
+        font-weight: 700;
+      }
+
+      .breakdown .item-kcal {
+        flex: 0 0 auto;
+        color: var(--muted);
+        font-weight: 700;
+      }
+
+      .item-stepper {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        flex: 0 0 auto;
+      }
+
+      .stepper-btn {
+        min-height: 32px;
+        min-width: 32px;
+        width: 32px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--surface);
+        color: var(--text);
+        font-size: 16px;
+        font-weight: 700;
+        line-height: 1;
+        padding: 0;
+      }
+
+      .serving-value {
+        min-width: 28px;
+        text-align: center;
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      .serving-unit {
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .status {
+        min-height: 20px;
+        margin: 10px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      .status.error {
+        color: var(--danger);
+      }
+
+      .status.success {
+        color: var(--primary);
+      }
+
+      .hidden {
+        display: none;
+      }
+
+      .save-section {
+        margin-top: 8px;
+        padding: 0 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>食事記録</h1>
+
+      <form id="mealForm">
+        <fieldset class="card">
+          <legend>食事タイプ</legend>
+          <div class="segmented">
+            <label class="choice">
+              <input type="radio" name="meal_type" value="朝" checked>
+              <span>朝</span>
+            </label>
+            <label class="choice">
+              <input type="radio" name="meal_type" value="昼">
+              <span>昼</span>
+            </label>
+            <label class="choice">
+              <input type="radio" name="meal_type" value="夜">
+              <span>夜</span>
+            </label>
+            <label class="choice">
+              <input type="radio" name="meal_type" value="間食">
+              <span>間食</span>
+            </label>
+          </div>
+        </fieldset>
+
+        <section class="card">
+          <label class="label" for="mealDatetime">食事日時</label>
+          <input id="mealDatetime" type="datetime-local">
+        </section>
+
+        <fieldset class="card">
+          <legend>入力モード</legend>
+          <div class="segmented two">
+            <label class="choice">
+              <input type="radio" name="input_mode" value="photo" checked>
+              <span>写真</span>
+            </label>
+            <label class="choice">
+              <input type="radio" name="input_mode" value="text">
+              <span>テキスト</span>
+            </label>
+          </div>
+        </fieldset>
+
+        <section id="photoSection" class="card">
+          <label class="label" for="mealImage">写真</label>
+          <input id="mealImage" type="file" accept="image/jpeg,image/png">
+          <div class="field">
+            <label class="label" for="photoNote">メモ</label>
+            <textarea id="photoNote" placeholder="例: 牛丼並盛、味噌汁"></textarea>
+          </div>
+        </section>
+
+        <section id="textSection" class="card hidden">
+          <label class="label" for="mealText">食事内容</label>
+          <textarea id="mealText" placeholder="例: 牛丼並盛、味噌汁"></textarea>
+        </section>
+
+        <fieldset class="card">
+          <legend>推定方法</legend>
+          <div class="segmented two">
+            <label class="choice">
+              <input type="radio" name="estimate_mode" value="api" checked>
+              <span>API</span>
+            </label>
+            <label class="choice">
+              <input type="radio" name="estimate_mode" value="manual">
+              <span>手動</span>
+            </label>
+          </div>
+        </fieldset>
+
+        <section id="apiSection" class="card">
+          <button class="secondary" type="button" id="estimateButton">推定する</button>
+        </section>
+
+        <section id="manualSection" class="card hidden">
+          <div class="prompt-box">
+            <label class="label" for="manualPrompt">プロンプト</label>
+            <textarea id="manualPrompt" class="prompt" readonly></textarea>
+            <button class="secondary" type="button" id="copyPromptButton">コピー</button>
+            <label class="label" for="manualJson">JSON</label>
+            <textarea id="manualJson" placeholder='{"items":[{"name":"牛丼","calories_kcal":652,"protein_g":24,"fat_g":18,"carbs_g":92}],"total":{"calories_kcal":652,"protein_g":24,"fat_g":18,"carbs_g":92}}'></textarea>
+            <button class="secondary" type="button" id="applyJsonButton">JSONを反映</button>
+          </div>
+        </section>
+
+        <section id="breakdownSection" class="card hidden">
+          <span class="label">内訳</span>
+          <ul id="breakdownList" class="breakdown"></ul>
+        </section>
+
+        <section class="card">
+          <span class="label">推定結果</span>
+          <div class="grid">
+            <label class="field">
+              <span class="label">カロリー (kcal)</span>
+              <input id="calories" type="number" min="0" step="1" inputmode="numeric">
+            </label>
+            <label class="field">
+              <span class="label">タンパク質 (g)</span>
+              <input id="protein" type="number" min="0" step="0.1" inputmode="decimal">
+            </label>
+            <label class="field">
+              <span class="label">脂質 (g)</span>
+              <input id="fat" type="number" min="0" step="0.1" inputmode="decimal">
+            </label>
+            <label class="field">
+              <span class="label">炭水化物 (g)</span>
+              <input id="carbs" type="number" min="0" step="0.1" inputmode="decimal">
+            </label>
+          </div>
+        </section>
+
+        <div class="save-section">
+          <button class="primary" type="submit" id="saveButton">保存</button>
+        </div>
+        <p id="status" class="status" aria-live="polite"></p>
+      </form>
+    </main>
+
+    <script>
+      const form = document.getElementById('mealForm');
+      const photoSection = document.getElementById('photoSection');
+      const textSection = document.getElementById('textSection');
+      const apiSection = document.getElementById('apiSection');
+      const manualSection = document.getElementById('manualSection');
+      const mealImage = document.getElementById('mealImage');
+      const photoNote = document.getElementById('photoNote');
+      const mealText = document.getElementById('mealText');
+      const manualPrompt = document.getElementById('manualPrompt');
+      const manualJson = document.getElementById('manualJson');
+      const mealDatetime = document.getElementById('mealDatetime');
+      const breakdownSection = document.getElementById('breakdownSection');
+      const breakdownList = document.getElementById('breakdownList');
+      const statusText = document.getElementById('status');
+      const estimateButton = document.getElementById('estimateButton');
+      const saveButton = document.getElementById('saveButton');
+      const nutritionFields = {
+        calories_kcal: document.getElementById('calories'),
+        protein_g: document.getElementById('protein'),
+        fat_g: document.getElementById('fat'),
+        carbs_g: document.getElementById('carbs'),
+      };
+      let currentBreakdownJson = '';
+      let baseItems = [];
+      let servings = [];
+
+      form.addEventListener('change', function (event) {
+        if (event.target.name === 'input_mode' || event.target.name === 'estimate_mode') {
+          syncMode();
+        }
+      });
+      mealText.addEventListener('input', updateManualPrompt);
+      photoNote.addEventListener('input', updateManualPrompt);
+      mealImage.addEventListener('change', updateManualPrompt);
+      estimateButton.addEventListener('click', estimateWithApi);
+      document.getElementById('copyPromptButton').addEventListener('click', copyManualPrompt);
+      document.getElementById('applyJsonButton').addEventListener('click', applyManualJson);
+      form.addEventListener('submit', saveMeal);
+
+      setDefaultDatetime();
+      syncMode();
+
+      function syncMode() {
+        const inputMode = getCheckedValue('input_mode');
+        const estimateMode = getCheckedValue('estimate_mode');
+        photoSection.classList.toggle('hidden', inputMode !== 'photo');
+        textSection.classList.toggle('hidden', inputMode !== 'text');
+        apiSection.classList.toggle('hidden', estimateMode !== 'api');
+        manualSection.classList.toggle('hidden', estimateMode !== 'manual');
+        updateManualPrompt();
+      }
+
+      function updateManualPrompt() {
+        const inputMode = getCheckedValue('input_mode');
+        const description = getDescription();
+
+        if (inputMode === 'photo') {
+          manualPrompt.value =
+            'この画像の食事の品ごとのカロリーとPFCを推定してください。JSONのみ回答してください。\n\n' +
+            '補足: ' +
+            (description || 'なし') +
+            '\n\n' +
+            '{"items":[{"name":"品名","calories_kcal":数値,"protein_g":数値,"fat_g":数値,"carbs_g":数値}],"total":{"calories_kcal":数値,"protein_g":数値,"fat_g":数値,"carbs_g":数値}}';
+          return;
+        }
+
+        manualPrompt.value =
+          '次の食事の品ごとのカロリーとPFCを推定してください。JSONのみ回答してください。\n\n' +
+          '食事: ' +
+          description +
+          '\n\n' +
+          '{"items":[{"name":"品名","calories_kcal":数値,"protein_g":数値,"fat_g":数値,"carbs_g":数値}],"total":{"calories_kcal":数値,"protein_g":数値,"fat_g":数値,"carbs_g":数値}}';
+      }
+
+      function estimateWithApi() {
+        setBusy(true, '推定中です...');
+        readSelectedImage()
+          .then(function (image) {
+            google.script.run
+              .withSuccessHandler(function (result) {
+                fillNutrition(result, true);
+                setStatus('推定結果を反映しました。', 'success');
+                setBusy(false);
+              })
+              .withFailureHandler(function (error) {
+                setStatus(error.message || '推定に失敗しました。', 'error');
+                setBusy(false);
+              })
+              .estimateCalories(getDescription(), image.base64, image.mimeType);
+          })
+          .catch(function (error) {
+            setStatus(error.message, 'error');
+            setBusy(false);
+          });
+      }
+
+      function copyManualPrompt() {
+        navigator.clipboard.writeText(manualPrompt.value).then(
+          function () {
+            setStatus('プロンプトをコピーしました。', 'success');
+          },
+          function () {
+            manualPrompt.select();
+            document.execCommand('copy');
+            setStatus('プロンプトをコピーしました。', 'success');
+          }
+        );
+      }
+
+      function applyManualJson() {
+        try {
+          fillNutrition(JSON.parse(manualJson.value), false);
+          setStatus('JSONを反映しました。', 'success');
+        } catch (error) {
+          setStatus('JSONを読み取れませんでした。', 'error');
+        }
+      }
+
+      function saveMeal(event) {
+        event.preventDefault();
+
+        try {
+          const payload = buildSavePayload();
+          setBusy(true, '保存中です...');
+          google.script.run
+            .withSuccessHandler(function () {
+              form.reset();
+              setDefaultDatetime();
+              syncMode();
+              clearNutrition();
+              setStatus('保存しました。', 'success');
+              setBusy(false);
+            })
+            .withFailureHandler(function (error) {
+              setStatus(error.message || '保存に失敗しました。', 'error');
+              setBusy(false);
+            })
+            .processInput(payload);
+        } catch (error) {
+          setStatus(error.message, 'error');
+        }
+      }
+
+      function buildSavePayload() {
+        const datetimeValue = mealDatetime.value;
+
+        if (!datetimeValue) {
+          throw new Error('食事日時を入力してください。');
+        }
+
+        const selectedDate = new Date(datetimeValue);
+
+        if (Number.isNaN(selectedDate.getTime())) {
+          throw new Error('食事日時が不正です。');
+        }
+
+        const mealTimestamp = selectedDate.toISOString();
+
+        const payload = {
+          timestamp: mealTimestamp,
+          meal_type: getCheckedValue('meal_type'),
+          description: getDescription(),
+          calories_kcal: nutritionFields.calories_kcal.value,
+          protein_g: nutritionFields.protein_g.value,
+          fat_g: nutritionFields.fat_g.value,
+          carbs_g: nutritionFields.carbs_g.value,
+          source: getCheckedValue('estimate_mode') === 'api' ? 'api' : 'manual',
+          breakdown_json: currentBreakdownJson,
+        };
+
+        if (!payload.description) {
+          throw new Error('食事内容を入力してください。');
+        }
+
+        Object.keys(nutritionFields).forEach(function (key) {
+          if (payload[key] === '') {
+            throw new Error('推定結果を入力してください。');
+          }
+        });
+
+        return payload;
+      }
+
+      function getDescription() {
+        if (getCheckedValue('input_mode') === 'photo') {
+          return photoNote.value.trim() || (mealImage.files[0] ? mealImage.files[0].name : '');
+        }
+
+        return mealText.value.trim();
+      }
+
+      function readSelectedImage() {
+        const file = mealImage.files[0];
+
+        if (getCheckedValue('input_mode') !== 'photo') {
+          return Promise.resolve({ base64: '', mimeType: '' });
+        }
+
+        if (!file) {
+          if (!photoNote.value.trim()) {
+            return Promise.reject(new Error('写真またはメモを入力してください。'));
+          }
+
+          return Promise.resolve({ base64: '', mimeType: '' });
+        }
+
+        if (!/^image\/(jpeg|png)$/.test(file.type)) {
+          return Promise.reject(new Error('JPEGまたはPNGを選択してください。'));
+        }
+
+        return new Promise(function (resolve, reject) {
+          const reader = new FileReader();
+          reader.onload = function () {
+            resolve({
+              base64: String(reader.result).replace(/^data:[^;]+;base64,/, ''),
+              mimeType: file.type,
+            });
+          };
+          reader.onerror = function () {
+            reject(new Error('画像を読み取れませんでした。'));
+          };
+          reader.readAsDataURL(file);
+        });
+      }
+
+      function fillNutrition(result, enableStepper) {
+        const total = result.total || result;
+        const items = Array.isArray(result.items) ? result.items : [];
+
+        nutritionFields.calories_kcal.value = normalizeNumber(total.calories_kcal);
+        nutritionFields.protein_g.value = normalizeNumber(total.protein_g);
+        nutritionFields.fat_g.value = normalizeNumber(total.fat_g);
+        nutritionFields.carbs_g.value = normalizeNumber(total.carbs_g);
+        renderBreakdown(items, enableStepper);
+      }
+
+      function clearNutrition() {
+        Object.keys(nutritionFields).forEach(function (key) {
+          nutritionFields[key].value = '';
+        });
+        baseItems = [];
+        servings = [];
+        renderBreakdown([], false);
+      }
+
+      function renderBreakdown(items, enableStepper) {
+        breakdownList.innerHTML = '';
+        currentBreakdownJson = '';
+        baseItems = [];
+        servings = [];
+
+        if (!items.length) {
+          breakdownSection.classList.add('hidden');
+          return;
+        }
+
+        baseItems = items.map(function (item) {
+          const rawItem = item || {};
+          return {
+            name: String(rawItem.name || '品名未設定'),
+            calories_kcal: normalizeNumber(rawItem.calories_kcal) || 0,
+            protein_g: normalizeNumber(rawItem.protein_g) || 0,
+            fat_g: normalizeNumber(rawItem.fat_g) || 0,
+            carbs_g: normalizeNumber(rawItem.carbs_g) || 0,
+          };
+        });
+        servings = baseItems.map(function () {
+          return 1.0;
+        });
+
+        baseItems.forEach(function (item, index) {
+          const li = document.createElement('li');
+          li.dataset.index = index;
+          const name = document.createElement('span');
+          const kcal = document.createElement('span');
+          name.className = 'item-name';
+          kcal.className = 'item-kcal';
+          name.textContent = item.name;
+          kcal.textContent = item.calories_kcal + ' kcal';
+          li.appendChild(name);
+
+          if (enableStepper) {
+            const stepper = document.createElement('div');
+            const btnDec = document.createElement('button');
+            const value = document.createElement('span');
+            const btnInc = document.createElement('button');
+            const unit = document.createElement('span');
+
+            stepper.className = 'item-stepper';
+            btnDec.className = 'stepper-btn';
+            value.className = 'serving-value';
+            btnInc.className = 'stepper-btn';
+            unit.className = 'serving-unit';
+
+            btnDec.type = 'button';
+            btnDec.dataset.delta = '-0.1';
+            btnDec.textContent = '−';
+            value.textContent = '1.0';
+            btnInc.type = 'button';
+            btnInc.dataset.delta = '0.1';
+            btnInc.textContent = '＋';
+            unit.textContent = '人前';
+
+            btnDec.addEventListener('click', function () {
+              changeServing(index, -0.1);
+            });
+            btnInc.addEventListener('click', function () {
+              changeServing(index, 0.1);
+            });
+
+            stepper.appendChild(btnDec);
+            stepper.appendChild(value);
+            stepper.appendChild(btnInc);
+            stepper.appendChild(unit);
+            li.appendChild(stepper);
+          }
+
+          li.appendChild(kcal);
+          breakdownList.appendChild(li);
+        });
+
+        breakdownSection.classList.remove('hidden');
+
+        if (enableStepper) {
+          refreshTotals();
+        } else {
+          currentBreakdownJson = JSON.stringify(baseItems);
+          baseItems = [];
+          servings = [];
+        }
+      }
+
+      function changeServing(index, delta) {
+        const next = Math.round((servings[index] + delta) * 10) / 10;
+
+        if (next < 0.1) {
+          return;
+        }
+
+        servings[index] = next;
+
+        const li = breakdownList.querySelector('[data-index="' + index + '"]');
+        const value = li.querySelector('.serving-value');
+        const kcal = li.querySelector('.item-kcal');
+        const item = baseItems[index];
+
+        value.textContent = next.toFixed(1);
+        kcal.textContent = Math.round(item.calories_kcal * next) + ' kcal';
+
+        refreshTotals();
+      }
+
+      function refreshTotals() {
+        let totalKcal = 0;
+        let totalProtein = 0;
+        let totalFat = 0;
+        let totalCarbs = 0;
+        const adjustedItems = [];
+
+        baseItems.forEach(function (item, index) {
+          const serving = servings[index];
+          const adjustedItem = {
+            name: item.name,
+            calories_kcal: roundToTenth(item.calories_kcal * serving),
+            protein_g: roundToTenth(item.protein_g * serving),
+            fat_g: roundToTenth(item.fat_g * serving),
+            carbs_g: roundToTenth(item.carbs_g * serving),
+          };
+
+          adjustedItems.push(adjustedItem);
+          totalKcal += adjustedItem.calories_kcal;
+          totalProtein += adjustedItem.protein_g;
+          totalFat += adjustedItem.fat_g;
+          totalCarbs += adjustedItem.carbs_g;
+        });
+
+        nutritionFields.calories_kcal.value = Math.round(totalKcal);
+        nutritionFields.protein_g.value = roundToTenth(totalProtein);
+        nutritionFields.fat_g.value = roundToTenth(totalFat);
+        nutritionFields.carbs_g.value = roundToTenth(totalCarbs);
+        currentBreakdownJson = JSON.stringify(adjustedItems);
+      }
+
+      function normalizeNumber(value) {
+        const numberValue = Number(value);
+        return Number.isFinite(numberValue) && numberValue >= 0 ? numberValue : '';
+      }
+
+      function roundToTenth(value) {
+        return Math.round(value * 10) / 10;
+      }
+
+      function getCheckedValue(name) {
+        return form.querySelector('input[name="' + name + '"]:checked').value;
+      }
+
+      function setDefaultDatetime() {
+        const now = new Date();
+        const pad = function (number) {
+          return String(number).padStart(2, '0');
+        };
+        mealDatetime.value =
+          now.getFullYear() +
+          '-' +
+          pad(now.getMonth() + 1) +
+          '-' +
+          pad(now.getDate()) +
+          'T' +
+          pad(now.getHours()) +
+          ':' +
+          pad(now.getMinutes());
+      }
+
+      function setBusy(isBusy, message) {
+        estimateButton.disabled = isBusy;
+        saveButton.disabled = isBusy;
+        if (message) {
+          setStatus(message);
+        }
+      }
+
+      function setStatus(message, type) {
+        statusText.textContent = message || '';
+        statusText.className = 'status' + (type ? ' ' + type : '');
+      }
+    </script>
+  </body>
+</html>

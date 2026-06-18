@@ -1,0 +1,5 @@
+effort: fast
+upgrade_to_standard:
+  - estimateCalories  # Gemini API 呼び出し変更時
+  - PropertiesService  # API キー取得ロジック変更時
+  - processInput  # Sheets 書き込みロジック変更時
