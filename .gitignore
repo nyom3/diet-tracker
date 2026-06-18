@@ -1,5 +1,8 @@
 .review-inbox
 .clasp.json
+node_modules/
+dist/
+*.tsbuildinfo
 docs/sample/
 docs/task-briefs/
 local/
