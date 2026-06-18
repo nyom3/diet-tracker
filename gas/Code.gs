@@ -211,13 +211,14 @@ function estimateCalories(inputText, imageBase64, imageMimeType) {
   }
 
   const payload = JSON.parse(body);
-  const responseText =
+  const allParts = (
     payload.candidates &&
     payload.candidates[0] &&
     payload.candidates[0].content &&
-    payload.candidates[0].content.parts &&
-    payload.candidates[0].content.parts[0] &&
-    payload.candidates[0].content.parts[0].text;
+    payload.candidates[0].content.parts
+  ) || [];
+  const responsePart = allParts.filter(function (p) { return !p.thought && p.text; })[0];
+  const responseText = responsePart && responsePart.text;
 
   if (!responseText) {
     throw new Error('Gemini API の応答が空です。');
@@ -264,13 +265,14 @@ function callGeminiText(prompt) {
   }
 
   const payload = JSON.parse(body);
-  const responseText =
+  const allParts = (
     payload.candidates &&
     payload.candidates[0] &&
     payload.candidates[0].content &&
-    payload.candidates[0].content.parts &&
-    payload.candidates[0].content.parts[0] &&
-    payload.candidates[0].content.parts[0].text;
+    payload.candidates[0].content.parts
+  ) || [];
+  const responsePart = allParts.filter(function (p) { return !p.thought && p.text; })[0];
+  const responseText = responsePart && responsePart.text;
 
   if (!responseText) {
     throw new Error('Gemini API の応答が空です。');
