@@ -555,7 +555,12 @@ function formatToday(): string {
 }
 
 function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : '処理に失敗しました。';
+  if (error instanceof Error) return error.message;
+  // GAS withFailureHandler passes a plain object, not an Error instance
+  if (typeof error === 'object' && error !== null && 'message' in error) {
+    return String((error as { message: unknown }).message);
+  }
+  return '処理に失敗しました。';
 }
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
