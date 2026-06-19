@@ -690,7 +690,7 @@ function buildPayload({
   });
 
   return {
-    timestamp: selectedDate.toISOString(),
+    timestamp: datetime + ':00.000+09:00',
     meal_type: mealType,
     description,
     calories_kcal: total.calories_kcal,
@@ -704,7 +704,7 @@ function buildPayload({
 
 function buildQuickPayload(meal: SavedMeal): SaveMealPayload {
   return {
-    timestamp: new Date().toISOString(),
+    timestamp: createLocalDatetimeValue() + ':00.000+09:00',
     meal_type: getDefaultMealType(),
     description: meal.description,
     calories_kcal: meal.calories_kcal,
