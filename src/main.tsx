@@ -62,6 +62,7 @@ function App(): JSX.Element {
   const [photoFile, setPhotoFile] = React.useState<File | null>(null);
   const [photoNote, setPhotoNote] = React.useState('');
   const [mealText, setMealText] = React.useState('');
+  const [displayName, setDisplayName] = React.useState('');
   const [manualJson, setManualJson] = React.useState('');
   const [total, setTotal] = React.useState<NutritionTotal>(emptyTotal);
   const [items, setItems] = React.useState<NutritionItem[]>([]);
@@ -76,14 +77,15 @@ function App(): JSX.Element {
   const [busy, setBusy] = React.useState<'estimate' | 'save' | 'quick' | 'feedback' | null>(null);
   const [previewUrl, setPreviewUrl] = React.useState('');
 
-  const description = inputMode === 'photo'
-    ? photoNote.trim() || photoFile?.name || ''
+  const estimationInput = inputMode === 'photo'
+    ? photoNote.trim()
     : mealText.trim();
-  const manualPrompt = createManualPrompt(inputMode, description);
+  const savedDescription = displayName.trim();
+  const manualPrompt = createManualPrompt(inputMode, estimationInput);
   const effectiveTotal = items.length > 0 ? calculateTotal(items, servings) : total;
   const canSave =
     !busy &&
-    Boolean(description) &&
+    Boolean(savedDescription) &&
     hasNutrition &&
     Object.values(effectiveTotal).every((value) => Number.isFinite(value) && value >= 0);
 
@@ -112,6 +114,10 @@ function App(): JSX.Element {
     setItems(nextItems);
     setServings(enableStepper ? nextItems.map(() => 1) : []);
     setHasNutrition(true);
+    if (enableStepper) {
+      const autoName = result.display_name || (nextItems.length > 0 ? nextItems[0].name : '');
+      if (autoName) setDisplayName(autoName);
+    }
   }
 
   async function handleEstimate(): Promise<void> {
@@ -119,7 +125,7 @@ function App(): JSX.Element {
       setBusy('estimate');
       setStatus({ message: '推定中です。' });
       const image = await readSelectedImage(inputMode, photoFile, photoNote);
-      const result = await estimateCalories(description, image.base64, image.mimeType);
+      const result = await estimateCalories(estimationInput, image.base64, image.mimeType);
       applyNutrition(result, true);
       setStatus({ message: '推定結果を反映しました。', type: 'success' });
     } catch (error) {
@@ -154,7 +160,7 @@ function App(): JSX.Element {
       const payload = buildPayload({
         datetime,
         mealType,
-        description,
+        description: savedDescription,
         estimateMode,
         total: effectiveTotal,
         items,
@@ -185,6 +191,7 @@ function App(): JSX.Element {
     setPhotoFile(null);
     setPhotoNote('');
     setMealText('');
+    setDisplayName('');
     setManualJson('');
     setTotal(emptyTotal);
     setItems([]);
@@ -253,6 +260,7 @@ function App(): JSX.Element {
     setPhotoFile(null);
     setPhotoNote('');
     setMealText(meal.description);
+    setDisplayName(meal.description);
     setManualJson('');
     setTotal({
       calories_kcal: meal.calories_kcal,
@@ -453,6 +461,15 @@ function App(): JSX.Element {
               />
             </label>
           )}
+          <label className="field">
+            <span>食事名</span>
+            <input
+              value={displayName}
+              placeholder="推定後に自動入力されます"
+              onChange={(event) => setDisplayName(event.target.value)}
+            />
+            <small className="field-hint">履歴に表示される名前です。</small>
+          </label>
         </section>
 
         <section className="panel">

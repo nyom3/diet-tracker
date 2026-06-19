@@ -169,8 +169,10 @@ function estimateCalories(inputText, imageBase64, imageMimeType) {
 
   const prompt =
     'あなたは栄養士です。食事の説明または画像から、品ごとのカロリーとPFCを推定してください。\n' +
+    'display_name は食事全体を表す短い日本語の名前（10文字以内目安）にしてください。\n' +
     '必ずJSONのみで回答してください。他の文字列を含めないでください。\n' +
-    '{"items":[{"name":"品名","calories_kcal":数値,"protein_g":数値,"fat_g":数値,"carbs_g":数値}],' +
+    '{"display_name":"食事全体を表す短い日本語の名前（10文字以内目安、例: 牛丼定食）",' +
+    '"items":[{"name":"品名","calories_kcal":数値,"protein_g":数値,"fat_g":数値,"carbs_g":数値}],' +
     '"total":{"calories_kcal":数値,"protein_g":数値,"fat_g":数値,"carbs_g":数値}}\n\n' +
     (text ? '食事: ' + text : '画像の食事を推定してください。');
 
@@ -486,6 +488,7 @@ function normalizeNutritionResult(result, fallbackName) {
       ];
 
   return {
+    display_name: String(result.display_name || '').trim(),
     items: rawItems.map(normalizeNutritionItem),
     total: normalizedTotal,
   };

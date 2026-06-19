@@ -20,6 +20,7 @@ export type NutritionTotal = {
 };
 
 export type NutritionResult = {
+  display_name?: string;
   items?: NutritionItem[];
   total?: NutritionTotal;
 } & Partial<NutritionTotal>;
