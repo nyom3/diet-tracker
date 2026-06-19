@@ -116,7 +116,7 @@ function App(): JSX.Element {
     setHasNutrition(true);
     if (enableStepper) {
       const autoName = result.display_name || (nextItems.length > 0 ? nextItems[0].name : '');
-      if (autoName) setDisplayName(autoName);
+      if (autoName && !displayName.trim()) setDisplayName(autoName);
     }
   }
 
@@ -465,7 +465,7 @@ function App(): JSX.Element {
             <span>食事名</span>
             <input
               value={displayName}
-              placeholder="推定後に自動入力されます"
+              placeholder={estimateMode === 'api' ? '推定後に自動入力されます' : '食事名を入力してください'}
               onChange={(event) => setDisplayName(event.target.value)}
             />
             <small className="field-hint">履歴に表示される名前です。</small>
