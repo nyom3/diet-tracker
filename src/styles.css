@@ -416,6 +416,21 @@ h2 {
   font-weight: 900;
 }
 
+.recent-toggle-button {
+  display: inline-flex;
+  min-height: 44px;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--primary);
+  padding: 0 12px;
+  font-weight: 900;
+}
+
 .empty-text {
   margin: 0;
   color: var(--muted);

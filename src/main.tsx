@@ -40,6 +40,7 @@ import type {
 import './styles.css';
 
 const mealTypes: MealType[] = ['朝', '昼', '夜', '間食'];
+const recentMealsPreviewCount = 3;
 const nutritionKeys: Array<{ key: NutritionKey; label: string; unit: string; step: string }> = [
   { key: 'calories_kcal', label: 'カロリー', unit: 'kcal', step: '1' },
   { key: 'protein_g', label: 'タンパク質', unit: 'g', step: '0.1' },
@@ -69,6 +70,7 @@ function App(): JSX.Element {
   const [servings, setServings] = React.useState<number[]>([]);
   const [hasNutrition, setHasNutrition] = React.useState(false);
   const [recentMeals, setRecentMeals] = React.useState<SavedMeal[]>([]);
+  const [isRecentExpanded, setIsRecentExpanded] = React.useState(false);
   const [todaySummary, setTodaySummary] = React.useState<TodaySummary | null>(null);
   const [dailyFeedback, setDailyFeedback] = React.useState<DailyFeedback | null>(null);
   const [selectedMealId, setSelectedMealId] = React.useState('');
@@ -83,6 +85,10 @@ function App(): JSX.Element {
   const savedDescription = displayName.trim();
   const manualPrompt = createManualPrompt(inputMode, estimationInput);
   const effectiveTotal = items.length > 0 ? calculateTotal(items, servings) : total;
+  const visibleRecentMeals = isRecentExpanded
+    ? recentMeals
+    : recentMeals.slice(0, recentMealsPreviewCount);
+  const hiddenRecentMealsCount = Math.max(0, recentMeals.length - recentMealsPreviewCount);
   const canSave =
     !busy &&
     Boolean(savedDescription) &&
@@ -358,7 +364,7 @@ function App(): JSX.Element {
         </div>
         {recentMeals.length > 0 ? (
           <ul className="recent-list">
-            {recentMeals.map((meal) => (
+            {visibleRecentMeals.map((meal) => (
               <li key={meal.id}>
                 <button className="recent-edit-button" type="button" onClick={() => loadMealForEdit(meal)}>
                   <History size={18} />
@@ -381,6 +387,16 @@ function App(): JSX.Element {
           </ul>
         ) : (
           <p className="empty-text">GAS Web App 上で最近の記録を読み込みます。</p>
+        )}
+        {hiddenRecentMealsCount > 0 && (
+          <button
+            className="recent-toggle-button"
+            type="button"
+            aria-expanded={isRecentExpanded}
+            onClick={() => setIsRecentExpanded((expanded) => !expanded)}
+          >
+            {isRecentExpanded ? '閉じる' : `さらに表示（あと${hiddenRecentMealsCount}件）`}
+          </button>
         )}
       </section>
 
