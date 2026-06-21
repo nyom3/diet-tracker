@@ -1,4 +1,5 @@
 const FOOD_LOG_SHEET_NAME = 'food_log';
+const FAVORITES_SHEET_NAME = 'favorites';
 const TARGETS_SHEET_NAME = 'targets';
 const HEALTH_DATA_SHEET_NAME = 'health_data';
 const WEEKLY_REVIEW_SHEET_NAME = 'weekly_review';
@@ -19,6 +20,16 @@ const FOOD_LOG_HEADERS = [
   'carbs_g',
   'source',
   'breakdown_json',
+];
+const FAVORITE_HEADERS = [
+  'id',
+  'description',
+  'calories_kcal',
+  'protein_g',
+  'fat_g',
+  'carbs_g',
+  'breakdown_json',
+  'created_at',
 ];
 const TARGET_KEYS = ['calories_kcal', 'protein_g', 'fat_g', 'carbs_g'];
 const WEEKLY_REVIEW_HEADERS = ['generated_at', 'window_start', 'window_end', 'text'];
@@ -70,6 +81,74 @@ function listRecentMeals(limit) {
       return meal.id;
     })
     .reverse();
+}
+
+function listFavorites() {
+  const sheet = getFavoritesSheet();
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow < 2) {
+    return [];
+  }
+
+  const values = sheet.getRange(2, 1, lastRow - 1, FAVORITE_HEADERS.length).getValues();
+
+  return values
+    .map(function (row) {
+      return rowToFavorite(row);
+    })
+    .filter(function (favorite) {
+      return favorite.id;
+    })
+    .sort(function (a, b) {
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    });
+}
+
+function addFavorite(data) {
+  const input = validateFavoriteInput(data);
+  const sheet = getFavoritesSheet();
+  const favorite = {
+    id: createFavoriteId(),
+    description: input.description,
+    calories_kcal: input.calories_kcal,
+    protein_g: input.protein_g,
+    fat_g: input.fat_g,
+    carbs_g: input.carbs_g,
+    breakdown_json: input.breakdown_json,
+    created_at: new Date().toISOString(),
+  };
+
+  sheet.appendRow([
+    favorite.id,
+    favorite.description,
+    favorite.calories_kcal,
+    favorite.protein_g,
+    favorite.fat_g,
+    favorite.carbs_g,
+    favorite.breakdown_json,
+    favorite.created_at,
+  ]);
+
+  return favorite;
+}
+
+function removeFavorite(id) {
+  const favoriteId = String(id || '').trim();
+
+  if (!favoriteId) {
+    throw new Error('削除対象のお気に入りidが不正です。');
+  }
+
+  const sheet = getFavoritesSheet();
+  const rowIndex = findFavoriteRowById(sheet, favoriteId);
+
+  if (rowIndex < 0) {
+    throw new Error('削除対象のお気に入りが見つかりません。');
+  }
+
+  sheet.deleteRow(rowIndex);
+  return { ok: true, id: favoriteId };
 }
 
 function updateMeal(id, data) {
@@ -438,6 +517,22 @@ function getFoodLogSheet() {
   return sheet;
 }
 
+function getFavoritesSheet() {
+  const spreadsheet = getSpreadsheet();
+  const sheet = spreadsheet.getSheetByName(FAVORITES_SHEET_NAME) || spreadsheet.insertSheet(FAVORITES_SHEET_NAME);
+  const headerRange = sheet.getRange(1, 1, 1, FAVORITE_HEADERS.length);
+  const headers = headerRange.getValues()[0];
+  const shouldWriteHeaders = FAVORITE_HEADERS.some(function (header, index) {
+    return headers[index] !== header;
+  });
+
+  if (shouldWriteHeaders) {
+    headerRange.setValues([FAVORITE_HEADERS]);
+  }
+
+  return sheet;
+}
+
 function getTargetsSheet() {
   const spreadsheet = getSpreadsheet();
   const sheet = spreadsheet.getSheetByName(TARGETS_SHEET_NAME) || spreadsheet.insertSheet(TARGETS_SHEET_NAME);
@@ -545,6 +640,24 @@ function findFoodLogRowById(sheet, id) {
   return -1;
 }
 
+function findFavoriteRowById(sheet, id) {
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow < 2) {
+    return -1;
+  }
+
+  const ids = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+
+  for (var index = 0; index < ids.length; index += 1) {
+    if (String(ids[index][0] || '').trim() === id) {
+      return index + 2;
+    }
+  }
+
+  return -1;
+}
+
 function rowToFoodLog(row) {
   return {
     id: String(row[0] || '').trim(),
@@ -557,6 +670,19 @@ function rowToFoodLog(row) {
     carbs_g: toNonNegativeNumber(row[7], '炭水化物'),
     source: String(row[8] || '').trim(),
     breakdown_json: String(row[9] || '').trim(),
+  };
+}
+
+function rowToFavorite(row) {
+  return {
+    id: String(row[0] || '').trim(),
+    description: String(row[1] || '').trim(),
+    calories_kcal: toNonNegativeNumber(row[2], 'カロリー'),
+    protein_g: toNonNegativeNumber(row[3], 'タンパク質'),
+    fat_g: toNonNegativeNumber(row[4], '脂質'),
+    carbs_g: toNonNegativeNumber(row[5], '炭水化物'),
+    breakdown_json: String(row[6] || '').trim(),
+    created_at: row[7] instanceof Date ? row[7].toISOString() : String(row[7] || '').trim(),
   };
 }
 
@@ -693,6 +819,10 @@ function createMealId() {
   return 'meal_' + Utilities.getUuid();
 }
 
+function createFavoriteId() {
+  return 'fav_' + Utilities.getUuid();
+}
+
 function validateFoodLogInput(data) {
   if (!data || typeof data !== 'object') {
     throw new Error('保存データが不正です。');
@@ -730,6 +860,27 @@ function validateFoodLogInput(data) {
     carbs_g: toNonNegativeNumber(data.carbs_g, '炭水化物'),
     source: source,
     breakdown_json: breakdownJson,
+  };
+}
+
+function validateFavoriteInput(data) {
+  if (!data || typeof data !== 'object') {
+    throw new Error('お気に入りデータが不正です。');
+  }
+
+  const description = String(data.description || '').trim();
+
+  if (!description) {
+    throw new Error('お気に入りの食事名を入力してください。');
+  }
+
+  return {
+    description: description,
+    calories_kcal: toNonNegativeNumber(data.calories_kcal, 'カロリー'),
+    protein_g: toNonNegativeNumber(data.protein_g, 'タンパク質'),
+    fat_g: toNonNegativeNumber(data.fat_g, '脂質'),
+    carbs_g: toNonNegativeNumber(data.carbs_g, '炭水化物'),
+    breakdown_json: String(data.breakdown_json || '').trim(),
   };
 }
 

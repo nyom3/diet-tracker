@@ -12,16 +12,21 @@ import {
   RefreshCw,
   Save,
   Sparkles,
+  Star,
+  Trash2,
   Zap,
   X,
 } from 'lucide-react';
 import {
+  addFavorite,
   estimateCalories,
   getTargets,
   getTodaySummary,
   getWeeklyTrend,
+  listFavorites,
   listRecentMeals,
   processInput,
+  removeFavorite,
   saveTargets,
   summarizeTodayFeedback,
   summarizeWeeklyFeedback,
@@ -30,6 +35,8 @@ import {
 import type {
   DailyFeedback,
   EstimateMode,
+  FavoriteMeal,
+  FavoriteMealPayload,
   ImagePayload,
   InputMode,
   MealType,
@@ -49,6 +56,7 @@ import './styles.css';
 
 const mealTypes: MealType[] = ['朝', '昼', '夜', '間食'];
 const recentMealsPreviewCount = 3;
+const draftStorageKey = 'diet-tracker-meal-draft-v1';
 const nutritionKeys: Array<{ key: NutritionKey; label: string; unit: string; step: string }> = [
   { key: 'calories_kcal', label: 'カロリー', unit: 'kcal', step: '1' },
   { key: 'protein_g', label: 'タンパク質', unit: 'g', step: '0.1' },
@@ -89,6 +97,7 @@ function App(): JSX.Element {
   const [servings, setServings] = React.useState<number[]>([]);
   const [hasNutrition, setHasNutrition] = React.useState(false);
   const [recentMeals, setRecentMeals] = React.useState<SavedMeal[]>([]);
+  const [favorites, setFavorites] = React.useState<FavoriteMeal[]>([]);
   const [isRecentExpanded, setIsRecentExpanded] = React.useState(false);
   const [todaySummary, setTodaySummary] = React.useState<TodaySummary | null>(null);
   const [targets, setTargets] = React.useState<NutritionTargets>(emptyTargets);
@@ -99,9 +108,13 @@ function App(): JSX.Element {
   const [dailyFeedback, setDailyFeedback] = React.useState<DailyFeedback | null>(null);
   const [selectedMealId, setSelectedMealId] = React.useState('');
   const [loadingRecent, setLoadingRecent] = React.useState(false);
+  const [loadingFavorites, setLoadingFavorites] = React.useState(false);
   const [status, setStatus] = React.useState<{ message: string; type?: 'success' | 'error' }>({ message: '' });
-  const [busy, setBusy] = React.useState<'estimate' | 'save' | 'quick' | 'feedback' | 'targets' | 'weekly' | null>(null);
+  const [busy, setBusy] = React.useState<
+    'estimate' | 'save' | 'quick' | 'favorite' | 'removeFavorite' | 'feedback' | 'targets' | 'weekly' | null
+  >(null);
   const [previewUrl, setPreviewUrl] = React.useState('');
+  const draftPausedRef = React.useRef(true);
 
   const estimationInput = inputMode === 'photo'
     ? photoNote.trim()
@@ -137,6 +150,45 @@ function App(): JSX.Element {
   React.useEffect(() => {
     void refreshDashboard(false);
   }, []);
+
+  React.useEffect(() => {
+    const draft = readMealDraft();
+
+    if (!draft || selectedMealId) {
+      return;
+    }
+
+    setMealType(draft.mealType);
+    setDatetime(draft.datetime);
+    setInputMode(draft.inputMode);
+    setMealText(draft.mealText);
+    setPhotoNote(draft.photoNote);
+    setDisplayName(draft.displayName);
+    draftPausedRef.current = false;
+  }, []);
+
+  React.useEffect(() => {
+    if (selectedMealId || draftPausedRef.current) {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      writeMealDraft({
+        mealType,
+        datetime,
+        inputMode,
+        mealText,
+        photoNote,
+        displayName,
+      });
+    }, 500);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [datetime, displayName, inputMode, mealText, mealType, photoNote, selectedMealId]);
+
+  function markDraftDirty(): void {
+    draftPausedRef.current = false;
+  }
 
   function applyNutrition(result: NutritionResult, enableStepper: boolean): void {
     const nextTotal = normalizeTotal(result.total || result);
@@ -205,6 +257,7 @@ function App(): JSX.Element {
       } else {
         await processInput(payload);
       }
+      clearMealDraft();
       resetForm();
       await refreshDashboard(false);
       setStatus({ message: selectedMealId ? '更新しました。' : '保存しました。', type: 'success' });
@@ -216,6 +269,8 @@ function App(): JSX.Element {
   }
 
   function resetForm(): void {
+    draftPausedRef.current = true;
+    clearMealDraft();
     setMealType(getDefaultMealType());
     setInputMode('photo');
     setEstimateMode('api');
@@ -261,13 +316,16 @@ function App(): JSX.Element {
   async function refreshDashboard(showStatus: boolean): Promise<void> {
     try {
       setLoadingRecent(true);
-      const [meals, summary, nextTargets, trend] = await Promise.all([
+      setLoadingFavorites(true);
+      const [meals, nextFavorites, summary, nextTargets, trend] = await Promise.all([
         listRecentMeals(10),
+        listFavorites(),
         getTodaySummary(),
         getTargets(),
         getWeeklyTrend(),
       ]);
       setRecentMeals(meals);
+      setFavorites(nextFavorites);
       setTodaySummary(summary);
       setTargets(nextTargets);
       setTargetCaloriesInput(nextTargets.calories_kcal === null ? '' : String(Math.round(nextTargets.calories_kcal)));
@@ -285,6 +343,7 @@ function App(): JSX.Element {
       }
     } finally {
       setLoadingRecent(false);
+      setLoadingFavorites(false);
     }
   }
 
@@ -310,6 +369,7 @@ function App(): JSX.Element {
     setItems(nextItems);
     setServings(nextItems.map(() => 1));
     setHasNutrition(true);
+    draftPausedRef.current = true;
     setStatus({ message: '最近の記録を読み込みました。', type: 'success' });
   }
 
@@ -320,6 +380,48 @@ function App(): JSX.Element {
       await processInput(buildQuickPayload(meal));
       await refreshDashboard(false);
       setStatus({ message: 'クイック登録しました。', type: 'success' });
+    } catch (error) {
+      setStatus({ message: getErrorMessage(error), type: 'error' });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleQuickRegisterFavorite(favorite: FavoriteMeal): Promise<void> {
+    try {
+      setBusy('quick');
+      setStatus({ message: 'お気に入りを登録中です。' });
+      await processInput(buildQuickPayload(favorite));
+      await refreshDashboard(false);
+      setStatus({ message: 'お気に入りから登録しました。', type: 'success' });
+    } catch (error) {
+      setStatus({ message: getErrorMessage(error), type: 'error' });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleAddFavorite(meal: SavedMeal): Promise<void> {
+    try {
+      setBusy('favorite');
+      setStatus({ message: 'お気に入りに追加中です。' });
+      await addFavorite(buildFavoritePayload(meal));
+      await refreshDashboard(false);
+      setStatus({ message: 'お気に入りに追加しました。', type: 'success' });
+    } catch (error) {
+      setStatus({ message: getErrorMessage(error), type: 'error' });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleRemoveFavorite(favorite: FavoriteMeal): Promise<void> {
+    try {
+      setBusy('removeFavorite');
+      setStatus({ message: 'お気に入りを削除中です。' });
+      await removeFavorite(favorite.id);
+      setFavorites((current) => current.filter((item) => item.id !== favorite.id));
+      setStatus({ message: 'お気に入りを削除しました。', type: 'success' });
     } catch (error) {
       setStatus({ message: getErrorMessage(error), type: 'error' });
     } finally {
@@ -471,7 +573,7 @@ function App(): JSX.Element {
             aria-label="最近の記録を更新"
             onClick={() => void refreshDashboard(true)}
           >
-            {loadingRecent ? <Loader2 className="spin" size={18} /> : <RefreshCw size={18} />}
+            {loadingRecent || loadingFavorites ? <Loader2 className="spin" size={18} /> : <RefreshCw size={18} />}
           </button>
         </div>
         {recentMeals.length > 0 ? (
@@ -485,15 +587,26 @@ function App(): JSX.Element {
                     <em>{formatMealTime(meal.timestamp)} / {meal.meal_type} / {Math.round(meal.calories_kcal)} kcal</em>
                   </span>
                 </button>
-                <button
-                  className="quick-register-button"
-                  type="button"
-                  disabled={busy !== null}
-                  onClick={() => void handleQuickRegister(meal)}
-                >
-                  {busy === 'quick' ? <Loader2 className="spin" size={16} /> : <Zap size={16} />}
-                  登録
-                </button>
+                <div className="meal-action-row">
+                  <button
+                    className="favorite-add-button"
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={() => void handleAddFavorite(meal)}
+                  >
+                    {busy === 'favorite' ? <Loader2 className="spin" size={16} /> : <Star size={16} />}
+                    お気に入り追加
+                  </button>
+                  <button
+                    className="quick-register-button"
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={() => void handleQuickRegister(meal)}
+                  >
+                    {busy === 'quick' ? <Loader2 className="spin" size={16} /> : <Zap size={16} />}
+                    登録
+                  </button>
+                </div>
               </li>
             ))}
           </ul>
@@ -509,6 +622,52 @@ function App(): JSX.Element {
           >
             {isRecentExpanded ? '閉じる' : `さらに表示（あと${hiddenRecentMealsCount}件）`}
           </button>
+        )}
+      </section>
+
+      <section className="panel favorite-panel">
+        <div className="section-heading">
+          <div>
+            <span className="section-label">定番</span>
+            <h2>お気に入り</h2>
+          </div>
+        </div>
+        {favorites.length > 0 ? (
+          <ul className="recent-list">
+            {favorites.map((favorite) => (
+              <li key={favorite.id}>
+                <div className="favorite-info">
+                  <Star size={18} />
+                  <span>
+                    <strong>{favorite.description}</strong>
+                    <em>{Math.round(favorite.calories_kcal)} kcal / P{favorite.protein_g} / F{favorite.fat_g} / C{favorite.carbs_g}</em>
+                  </span>
+                </div>
+                <div className="meal-action-row">
+                  <button
+                    className="quick-register-button"
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={() => void handleQuickRegisterFavorite(favorite)}
+                  >
+                    {busy === 'quick' ? <Loader2 className="spin" size={16} /> : <Zap size={16} />}
+                    登録
+                  </button>
+                  <button
+                    className="favorite-remove-button"
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={() => void handleRemoveFavorite(favorite)}
+                  >
+                    {busy === 'removeFavorite' ? <Loader2 className="spin" size={16} /> : <Trash2 size={16} />}
+                    削除
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="empty-text">最近の記録からお気に入りに追加すると、ここからワンタップ登録できます。</p>
         )}
       </section>
 
@@ -568,14 +727,20 @@ function App(): JSX.Element {
         <section className="panel compact-panel">
           <SegmentedGroup label="食事タイプ">
             {mealTypes.map((value) => (
-              <SegmentedButton key={value} active={mealType === value} onClick={() => setMealType(value)}>
+              <SegmentedButton key={value} active={mealType === value} onClick={() => {
+                markDraftDirty();
+                setMealType(value);
+              }}>
                 {value}
               </SegmentedButton>
             ))}
           </SegmentedGroup>
           <label className="field datetime-field">
             <span>食事日時</span>
-            <input value={datetime} type="datetime-local" onChange={(event) => setDatetime(event.target.value)} />
+            <input value={datetime} type="datetime-local" onChange={(event) => {
+              markDraftDirty();
+              setDatetime(event.target.value);
+            }} />
           </label>
         </section>
 
@@ -586,10 +751,16 @@ function App(): JSX.Element {
               <h2>食事内容</h2>
             </div>
             <div className="mode-switch">
-              <SegmentedButton active={inputMode === 'photo'} onClick={() => setInputMode('photo')}>
+              <SegmentedButton active={inputMode === 'photo'} onClick={() => {
+                markDraftDirty();
+                setInputMode('photo');
+              }}>
                 写真
               </SegmentedButton>
-              <SegmentedButton active={inputMode === 'text'} onClick={() => setInputMode('text')}>
+              <SegmentedButton active={inputMode === 'text'} onClick={() => {
+                markDraftDirty();
+                setInputMode('text');
+              }}>
                 テキスト
               </SegmentedButton>
             </div>
@@ -609,7 +780,10 @@ function App(): JSX.Element {
                 <input
                   type="file"
                   accept="image/jpeg,image/png"
-                  onChange={(event) => setPhotoFile(event.target.files?.[0] || null)}
+                  onChange={(event) => {
+                    markDraftDirty();
+                    setPhotoFile(event.target.files?.[0] || null);
+                  }}
                 />
               </label>
               <label className="field">
@@ -617,7 +791,10 @@ function App(): JSX.Element {
                 <textarea
                   value={photoNote}
                   placeholder="例: 白湯スープではなく豆乳。ご飯は少なめ"
-                  onChange={(event) => setPhotoNote(event.target.value)}
+                  onChange={(event) => {
+                    markDraftDirty();
+                    setPhotoNote(event.target.value);
+                  }}
                 />
                 <small className="field-hint">この補足は画像と一緒に推定へ渡されます。</small>
               </label>
@@ -628,7 +805,10 @@ function App(): JSX.Element {
               <textarea
                 value={mealText}
                 placeholder="例: 牛丼並盛、味噌汁"
-                onChange={(event) => setMealText(event.target.value)}
+                onChange={(event) => {
+                  markDraftDirty();
+                  setMealText(event.target.value);
+                }}
               />
             </label>
           )}
@@ -637,7 +817,10 @@ function App(): JSX.Element {
             <input
               value={displayName}
               placeholder={estimateMode === 'api' ? '推定後に自動入力されます' : '食事名を入力してください'}
-              onChange={(event) => setDisplayName(event.target.value)}
+              onChange={(event) => {
+                markDraftDirty();
+                setDisplayName(event.target.value);
+              }}
             />
             <small className="field-hint">履歴に表示される名前です。</small>
           </label>
@@ -914,7 +1097,7 @@ function buildPayload({
   };
 }
 
-function buildQuickPayload(meal: SavedMeal): SaveMealPayload {
+function buildQuickPayload(meal: SavedMeal | FavoriteMeal): SaveMealPayload {
   return {
     timestamp: createLocalDatetimeValue() + ':00.000+09:00',
     meal_type: getDefaultMealType(),
@@ -924,6 +1107,17 @@ function buildQuickPayload(meal: SavedMeal): SaveMealPayload {
     fat_g: meal.fat_g,
     carbs_g: meal.carbs_g,
     source: 'manual',
+    breakdown_json: meal.breakdown_json,
+  };
+}
+
+function buildFavoritePayload(meal: SavedMeal): FavoriteMealPayload {
+  return {
+    description: meal.description,
+    calories_kcal: meal.calories_kcal,
+    protein_g: meal.protein_g,
+    fat_g: meal.fat_g,
+    carbs_g: meal.carbs_g,
     breakdown_json: meal.breakdown_json,
   };
 }
@@ -1148,6 +1342,58 @@ function parseBreakdownItems(breakdownJson: string): NutritionItem[] {
     return Array.isArray(rawItems) ? rawItems.map(normalizeItem) : [];
   } catch {
     return [];
+  }
+}
+
+type MealDraft = {
+  mealType: MealType;
+  datetime: string;
+  inputMode: InputMode;
+  mealText: string;
+  photoNote: string;
+  displayName: string;
+};
+
+function readMealDraft(): MealDraft | null {
+  try {
+    const raw = window.localStorage.getItem(draftStorageKey);
+
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as Partial<MealDraft>;
+    const mealType = mealTypes.includes(parsed.mealType as MealType)
+      ? parsed.mealType as MealType
+      : getDefaultMealType();
+    const inputMode = parsed.inputMode === 'text' ? 'text' : 'photo';
+
+    return {
+      mealType,
+      datetime: typeof parsed.datetime === 'string' && parsed.datetime ? parsed.datetime : createLocalDatetimeValue(),
+      inputMode,
+      mealText: typeof parsed.mealText === 'string' ? parsed.mealText : '',
+      photoNote: typeof parsed.photoNote === 'string' ? parsed.photoNote : '',
+      displayName: typeof parsed.displayName === 'string' ? parsed.displayName : '',
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeMealDraft(draft: MealDraft): void {
+  try {
+    window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
+  } catch {
+    // localStorage may be unavailable in private browsing or constrained WebViews.
+  }
+}
+
+function clearMealDraft(): void {
+  try {
+    window.localStorage.removeItem(draftStorageKey);
+  } catch {
+    // Ignore storage cleanup failures; saving must not fail because draft cleanup failed.
   }
 }
 
