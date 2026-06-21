@@ -1,5 +1,7 @@
 import type {
   DailyFeedback,
+  FavoriteMeal,
+  FavoriteMealPayload,
   NutritionResult,
   NutritionTargets,
   SavedMeal,
@@ -26,6 +28,9 @@ type GoogleScriptRun = {
   estimateCalories: (description: string, imageBase64: string, imageMimeType: string) => void;
   processInput: (payload: SaveMealPayload) => void;
   listRecentMeals: (limit: number) => void;
+  listFavorites: () => void;
+  addFavorite: (payload: FavoriteMealPayload) => void;
+  removeFavorite: (id: string) => void;
   updateMeal: (id: string, payload: SaveMealPayload) => void;
   getTodaySummary: () => void;
   getTargets: () => void;
@@ -55,6 +60,24 @@ export function processInput(payload: SaveMealPayload): Promise<{ ok: boolean; i
 export function listRecentMeals(limit: number): Promise<SavedMeal[]> {
   return callGas<SavedMeal[]>((runner) => {
     runner.listRecentMeals(limit);
+  });
+}
+
+export function listFavorites(): Promise<FavoriteMeal[]> {
+  return callGas<FavoriteMeal[]>((runner) => {
+    runner.listFavorites();
+  });
+}
+
+export function addFavorite(payload: FavoriteMealPayload): Promise<FavoriteMeal> {
+  return callGas<FavoriteMeal>((runner) => {
+    runner.addFavorite(payload);
+  });
+}
+
+export function removeFavorite(id: string): Promise<{ ok: boolean; id: string }> {
+  return callGas<{ ok: boolean; id: string }>((runner) => {
+    runner.removeFavorite(id);
   });
 }
 

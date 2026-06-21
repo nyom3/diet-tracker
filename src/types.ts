@@ -59,6 +59,24 @@ export type SavedMeal = SaveMealPayload & {
   carbs_g: number;
 };
 
+export type FavoriteMealPayload = {
+  description: string;
+  calories_kcal: number | string;
+  protein_g: number | string;
+  fat_g: number | string;
+  carbs_g: number | string;
+  breakdown_json: string;
+};
+
+export type FavoriteMeal = FavoriteMealPayload & {
+  id: string;
+  calories_kcal: number;
+  protein_g: number;
+  fat_g: number;
+  carbs_g: number;
+  created_at: string;
+};
+
 export type TodaySummary = {
   date: string;
   count: number;
