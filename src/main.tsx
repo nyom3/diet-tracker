@@ -11,6 +11,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  ChevronDown,
   Sparkles,
   Star,
   Trash2,
@@ -57,6 +58,8 @@ import './styles.css';
 const mealTypes: MealType[] = ['朝', '昼', '夜', '間食'];
 const recentMealsPreviewCount = 3;
 const draftStorageKey = 'diet-tracker-meal-draft-v1';
+const targetPanelStorageKey = 'panel_target_open';
+const weeklyPanelStorageKey = 'panel_weekly_open';
 const nutritionKeys: Array<{ key: NutritionKey; label: string; unit: string; step: string }> = [
   { key: 'calories_kcal', label: 'カロリー', unit: 'kcal', step: '1' },
   { key: 'protein_g', label: 'タンパク質', unit: 'g', step: '0.1' },
@@ -102,9 +105,11 @@ function App(): JSX.Element {
   const [todaySummary, setTodaySummary] = React.useState<TodaySummary | null>(null);
   const [targets, setTargets] = React.useState<NutritionTargets>(emptyTargets);
   const [targetCaloriesInput, setTargetCaloriesInput] = React.useState('');
+  const [isTargetPanelOpen, setIsTargetPanelOpen] = React.useState(() => readBooleanStorage(targetPanelStorageKey, false));
   const [pfcRatio, setPfcRatio] = React.useState(defaultPfcRatio);
   const [weeklyTrend, setWeeklyTrend] = React.useState<WeeklyTrend | null>(null);
   const [weeklyReview, setWeeklyReview] = React.useState<WeeklyReview | null>(null);
+  const [isWeeklyPanelOpen, setIsWeeklyPanelOpen] = React.useState(() => readBooleanStorage(weeklyPanelStorageKey, false));
   const [dailyFeedback, setDailyFeedback] = React.useState<DailyFeedback | null>(null);
   const [selectedMealId, setSelectedMealId] = React.useState('');
   const [loadingRecent, setLoadingRecent] = React.useState(false);
@@ -188,6 +193,22 @@ function App(): JSX.Element {
 
   function markDraftDirty(): void {
     draftPausedRef.current = false;
+  }
+
+  function toggleTargetPanel(): void {
+    setIsTargetPanelOpen((current) => {
+      const next = !current;
+      writeBooleanStorage(targetPanelStorageKey, next);
+      return next;
+    });
+  }
+
+  function toggleWeeklyPanel(): void {
+    setIsWeeklyPanelOpen((current) => {
+      const next = !current;
+      writeBooleanStorage(weeklyPanelStorageKey, next);
+      return next;
+    });
   }
 
   function applyNutrition(result: NutritionResult, enableStepper: boolean): void {
@@ -524,41 +545,51 @@ function App(): JSX.Element {
         )}
       </section>
 
-      <section className="panel target-panel">
-        <div className="section-heading">
-          <div>
+      <section className={`panel target-panel collapsible-panel ${isTargetPanelOpen ? 'open' : ''}`} aria-expanded={isTargetPanelOpen}>
+        <button
+          className="collapsible-heading"
+          type="button"
+          aria-expanded={isTargetPanelOpen}
+          onClick={toggleTargetPanel}
+        >
+          <span>
             <span className="section-label">目標</span>
-            <h2>1日の基準</h2>
-          </div>
-        </div>
-        <div className="target-grid">
-          <label className="field">
-            <span>目標 kcal</span>
-            <input
-              value={targetCaloriesInput}
-              type="number"
-              min="0"
-              step="1"
-              inputMode="numeric"
-              onChange={(event) => setTargetCaloriesInput(event.target.value)}
-            />
-          </label>
-          <div className="ratio-grid">
-            <RatioField label="P%" value={pfcRatio.protein} onChange={(value) => setPfcRatio({ ...pfcRatio, protein: value })} />
-            <RatioField label="F%" value={pfcRatio.fat} onChange={(value) => setPfcRatio({ ...pfcRatio, fat: value })} />
-            <RatioField label="C%" value={pfcRatio.carbs} onChange={(value) => setPfcRatio({ ...pfcRatio, carbs: value })} />
-          </div>
-        </div>
-        <div className="target-preview">
-          <span>{Math.round(calculatedTargets.calories_kcal)} kcal</span>
-          <span>P {calculatedTargets.protein_g}g</span>
-          <span>F {calculatedTargets.fat_g}g</span>
-          <span>C {calculatedTargets.carbs_g}g</span>
-        </div>
-        <button className="action-button secondary-action" type="button" disabled={busy !== null} onClick={handleSaveTargets}>
-          {busy === 'targets' ? <Loader2 className="spin" size={18} /> : <Save size={18} />}
-          目標を保存
+            <strong>1日の基準</strong>
+          </span>
+          <ChevronDown className={isTargetPanelOpen ? 'expanded' : ''} size={18} aria-hidden="true" />
         </button>
+        {isTargetPanelOpen && (
+          <div className="collapsible-body">
+            <div className="target-grid">
+              <label className="field">
+                <span>目標 kcal</span>
+                <input
+                  value={targetCaloriesInput}
+                  type="number"
+                  min="0"
+                  step="1"
+                  inputMode="numeric"
+                  onChange={(event) => setTargetCaloriesInput(event.target.value)}
+                />
+              </label>
+              <div className="ratio-grid">
+                <RatioField label="P%" value={pfcRatio.protein} onChange={(value) => setPfcRatio({ ...pfcRatio, protein: value })} />
+                <RatioField label="F%" value={pfcRatio.fat} onChange={(value) => setPfcRatio({ ...pfcRatio, fat: value })} />
+                <RatioField label="C%" value={pfcRatio.carbs} onChange={(value) => setPfcRatio({ ...pfcRatio, carbs: value })} />
+              </div>
+            </div>
+            <div className="target-preview">
+              <span>{Math.round(calculatedTargets.calories_kcal)} kcal</span>
+              <span>P {calculatedTargets.protein_g}g</span>
+              <span>F {calculatedTargets.fat_g}g</span>
+              <span>C {calculatedTargets.carbs_g}g</span>
+            </div>
+            <button className="action-button secondary-action" type="button" disabled={busy !== null} onClick={handleSaveTargets}>
+              {busy === 'targets' ? <Loader2 className="spin" size={18} /> : <Save size={18} />}
+              目標を保存
+            </button>
+          </div>
+        )}
       </section>
 
       <section className="panel recent-panel">
@@ -671,12 +702,20 @@ function App(): JSX.Element {
         )}
       </section>
 
-      <section className="panel weekly-panel">
-        <div className="section-heading">
-          <div>
-            <span className="section-label">7日</span>
-            <h2>トレンド</h2>
-          </div>
+      <section className={`panel weekly-panel collapsible-panel ${isWeeklyPanelOpen ? 'open' : ''}`} aria-expanded={isWeeklyPanelOpen}>
+        <div className="weekly-heading-row">
+          <button
+            className="collapsible-heading"
+            type="button"
+            aria-expanded={isWeeklyPanelOpen}
+            onClick={toggleWeeklyPanel}
+          >
+            <span>
+              <span className="section-label">7日</span>
+              <strong>トレンド</strong>
+            </span>
+            <ChevronDown className={isWeeklyPanelOpen ? 'expanded' : ''} size={18} aria-hidden="true" />
+          </button>
           <button
             className="action-button secondary-action weekly-feedback-button"
             type="button"
@@ -687,30 +726,34 @@ function App(): JSX.Element {
             週次コメント
           </button>
         </div>
-        {weeklyTrend ? (
-          <ul className="trend-list">
-            {weeklyTrend.days.map((day) => (
-              <li key={day.date}>
-                <div>
-                  <strong>{formatShortDate(day.date)}</strong>
-                  <span>{day.count > 0 ? `${day.count}件` : '食事0件'} / 体重 {day.weight_kg === null ? '-' : `${day.weight_kg}kg`}</span>
-                </div>
-                <div className="trend-values">
-                  <span className={isOverTarget(day.total.calories_kcal, targets.calories_kcal) ? 'over' : ''}>
-                    {Math.round(day.total.calories_kcal)}{targets.calories_kcal === null ? '' : `/${Math.round(targets.calories_kcal)}`} kcal
-                  </span>
-                  <small>P{day.total.protein_g} / F{day.total.fat_g} / C{day.total.carbs_g}</small>
-                </div>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="empty-text">GAS Web App 上で7日トレンドを読み込みます。</p>
-        )}
-        {weeklyReview && (
-          <p className="feedback-text">
-            前回 {formatShortDate(weeklyReview.generated_at)}: {weeklyReview.text}
-          </p>
+        {isWeeklyPanelOpen && (
+          <div className="collapsible-body">
+            {weeklyTrend ? (
+              <ul className="trend-list">
+                {weeklyTrend.days.map((day) => (
+                  <li key={day.date}>
+                    <div>
+                      <strong>{formatShortDate(day.date)}</strong>
+                      <span>{day.count > 0 ? `${day.count}件` : '食事0件'} / 体重 {day.weight_kg === null ? '-' : `${day.weight_kg}kg`}</span>
+                    </div>
+                    <div className="trend-values">
+                      <span className={isOverTarget(day.total.calories_kcal, targets.calories_kcal) ? 'over' : ''}>
+                        {Math.round(day.total.calories_kcal)}{targets.calories_kcal === null ? '' : `/${Math.round(targets.calories_kcal)}`} kcal
+                      </span>
+                      <small>P{day.total.protein_g} / F{day.total.fat_g} / C{day.total.carbs_g}</small>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="empty-text">GAS Web App 上で7日トレンドを読み込みます。</p>
+            )}
+            {weeklyReview && (
+              <p className="feedback-text">
+                前回 {formatShortDate(weeklyReview.generated_at)}: {weeklyReview.text}
+              </p>
+            )}
+          </div>
         )}
       </section>
 
@@ -1394,6 +1437,28 @@ function clearMealDraft(): void {
     window.localStorage.removeItem(draftStorageKey);
   } catch {
     // Ignore storage cleanup failures; saving must not fail because draft cleanup failed.
+  }
+}
+
+function readBooleanStorage(key: string, fallback: boolean): boolean {
+  try {
+    const raw = window.localStorage.getItem(key);
+
+    if (raw === null) {
+      return fallback;
+    }
+
+    return raw === 'true';
+  } catch {
+    return fallback;
+  }
+}
+
+function writeBooleanStorage(key: string, value: boolean): void {
+  try {
+    window.localStorage.setItem(key, String(value));
+  } catch {
+    // Panel state persistence is optional; UI toggling should still work.
   }
 }
 
