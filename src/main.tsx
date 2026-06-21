@@ -17,10 +17,14 @@ import {
 } from 'lucide-react';
 import {
   estimateCalories,
+  getTargets,
   getTodaySummary,
+  getWeeklyTrend,
   listRecentMeals,
   processInput,
+  saveTargets,
   summarizeTodayFeedback,
+  summarizeWeeklyFeedback,
   updateMeal,
 } from './gasClient';
 import type {
@@ -32,10 +36,14 @@ import type {
   NutritionItem,
   NutritionKey,
   NutritionResult,
+  NutritionTargets,
   NutritionTotal,
   SavedMeal,
   SaveMealPayload,
+  SaveTargetsPayload,
   TodaySummary,
+  WeeklyReview,
+  WeeklyTrend,
 } from './types';
 import './styles.css';
 
@@ -53,6 +61,17 @@ const emptyTotal: NutritionTotal = {
   protein_g: 0,
   fat_g: 0,
   carbs_g: 0,
+};
+const defaultPfcRatio = {
+  protein: 30,
+  fat: 20,
+  carbs: 50,
+};
+const emptyTargets: NutritionTargets = {
+  calories_kcal: null,
+  protein_g: null,
+  fat_g: null,
+  carbs_g: null,
 };
 
 function App(): JSX.Element {
@@ -72,11 +91,16 @@ function App(): JSX.Element {
   const [recentMeals, setRecentMeals] = React.useState<SavedMeal[]>([]);
   const [isRecentExpanded, setIsRecentExpanded] = React.useState(false);
   const [todaySummary, setTodaySummary] = React.useState<TodaySummary | null>(null);
+  const [targets, setTargets] = React.useState<NutritionTargets>(emptyTargets);
+  const [targetCaloriesInput, setTargetCaloriesInput] = React.useState('');
+  const [pfcRatio, setPfcRatio] = React.useState(defaultPfcRatio);
+  const [weeklyTrend, setWeeklyTrend] = React.useState<WeeklyTrend | null>(null);
+  const [weeklyReview, setWeeklyReview] = React.useState<WeeklyReview | null>(null);
   const [dailyFeedback, setDailyFeedback] = React.useState<DailyFeedback | null>(null);
   const [selectedMealId, setSelectedMealId] = React.useState('');
   const [loadingRecent, setLoadingRecent] = React.useState(false);
   const [status, setStatus] = React.useState<{ message: string; type?: 'success' | 'error' }>({ message: '' });
-  const [busy, setBusy] = React.useState<'estimate' | 'save' | 'quick' | 'feedback' | null>(null);
+  const [busy, setBusy] = React.useState<'estimate' | 'save' | 'quick' | 'feedback' | 'targets' | 'weekly' | null>(null);
   const [previewUrl, setPreviewUrl] = React.useState('');
 
   const estimationInput = inputMode === 'photo'
@@ -89,6 +113,8 @@ function App(): JSX.Element {
     ? recentMeals
     : recentMeals.slice(0, recentMealsPreviewCount);
   const hiddenRecentMealsCount = Math.max(0, recentMeals.length - recentMealsPreviewCount);
+  const calculatedTargets = calculateTargetsFromRatio(targetCaloriesInput, pfcRatio);
+  const hasTargets = hasCompleteTargets(targets);
   const canSave =
     !busy &&
     Boolean(savedDescription) &&
@@ -235,12 +261,19 @@ function App(): JSX.Element {
   async function refreshDashboard(showStatus: boolean): Promise<void> {
     try {
       setLoadingRecent(true);
-      const [meals, summary] = await Promise.all([
+      const [meals, summary, nextTargets, trend] = await Promise.all([
         listRecentMeals(10),
         getTodaySummary(),
+        getTargets(),
+        getWeeklyTrend(),
       ]);
       setRecentMeals(meals);
       setTodaySummary(summary);
+      setTargets(nextTargets);
+      setTargetCaloriesInput(nextTargets.calories_kcal === null ? '' : String(Math.round(nextTargets.calories_kcal)));
+      setPfcRatio(derivePfcRatio(nextTargets));
+      setWeeklyTrend(trend);
+      setWeeklyReview(trend.latest_review);
       if (showStatus) {
         setStatus({ message: '記録状況を更新しました。', type: 'success' });
       }
@@ -313,6 +346,37 @@ function App(): JSX.Element {
     }
   }
 
+  async function handleSaveTargets(): Promise<void> {
+    try {
+      const payload = buildTargetsPayload(calculatedTargets);
+      setBusy('targets');
+      setStatus({ message: '目標を保存中です。' });
+      const result = await saveTargets(payload);
+      setTargets(result.targets);
+      await refreshDashboard(false);
+      setStatus({ message: '目標を保存しました。', type: 'success' });
+    } catch (error) {
+      setStatus({ message: getErrorMessage(error), type: 'error' });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleWeeklyFeedback(): Promise<void> {
+    try {
+      setBusy('weekly');
+      setStatus({ message: '週次コメントを取得中です。' });
+      const review = await summarizeWeeklyFeedback();
+      setWeeklyReview(review);
+      await refreshDashboard(false);
+      setStatus({ message: '週次コメントを取得しました。', type: 'success' });
+    } catch (error) {
+      setStatus({ message: getErrorMessage(error), type: 'error' });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <main className="app-shell">
       <header className="app-header">
@@ -327,11 +391,22 @@ function App(): JSX.Element {
         <div>
           <span className="section-label">今日</span>
           <h2>
-            {Math.round(todaySummary?.total.calories_kcal || 0)} kcal
+            <span className={isOverTarget(todaySummary?.total.calories_kcal || 0, targets.calories_kcal) ? 'over' : ''}>
+              {formatTargetProgress(todaySummary?.total.calories_kcal || 0, targets.calories_kcal, 'kcal')}
+            </span>
             <small>
-              P{todaySummary?.total.protein_g || 0} / F{todaySummary?.total.fat_g || 0} / C{todaySummary?.total.carbs_g || 0}
+              <span className={isOverTarget(todaySummary?.total.protein_g || 0, targets.protein_g) ? 'over' : ''}>
+                P{formatTargetProgress(todaySummary?.total.protein_g || 0, targets.protein_g, 'g')}
+              </span>
+              <span className={isOverTarget(todaySummary?.total.fat_g || 0, targets.fat_g) ? 'over' : ''}>
+                F{formatTargetProgress(todaySummary?.total.fat_g || 0, targets.fat_g, 'g')}
+              </span>
+              <span className={isOverTarget(todaySummary?.total.carbs_g || 0, targets.carbs_g) ? 'over' : ''}>
+                C{formatTargetProgress(todaySummary?.total.carbs_g || 0, targets.carbs_g, 'g')}
+              </span>
             </small>
           </h2>
+          {!hasTargets && <p className="target-empty-note">目標を設定すると残り/超過を表示します。</p>}
         </div>
         <button
           className="action-button secondary-action feedback-action"
@@ -345,6 +420,43 @@ function App(): JSX.Element {
         {dailyFeedback && (
           <p className="feedback-text">{dailyFeedback.feedback}</p>
         )}
+      </section>
+
+      <section className="panel target-panel">
+        <div className="section-heading">
+          <div>
+            <span className="section-label">目標</span>
+            <h2>1日の基準</h2>
+          </div>
+        </div>
+        <div className="target-grid">
+          <label className="field">
+            <span>目標 kcal</span>
+            <input
+              value={targetCaloriesInput}
+              type="number"
+              min="0"
+              step="1"
+              inputMode="numeric"
+              onChange={(event) => setTargetCaloriesInput(event.target.value)}
+            />
+          </label>
+          <div className="ratio-grid">
+            <RatioField label="P%" value={pfcRatio.protein} onChange={(value) => setPfcRatio({ ...pfcRatio, protein: value })} />
+            <RatioField label="F%" value={pfcRatio.fat} onChange={(value) => setPfcRatio({ ...pfcRatio, fat: value })} />
+            <RatioField label="C%" value={pfcRatio.carbs} onChange={(value) => setPfcRatio({ ...pfcRatio, carbs: value })} />
+          </div>
+        </div>
+        <div className="target-preview">
+          <span>{Math.round(calculatedTargets.calories_kcal)} kcal</span>
+          <span>P {calculatedTargets.protein_g}g</span>
+          <span>F {calculatedTargets.fat_g}g</span>
+          <span>C {calculatedTargets.carbs_g}g</span>
+        </div>
+        <button className="action-button secondary-action" type="button" disabled={busy !== null} onClick={handleSaveTargets}>
+          {busy === 'targets' ? <Loader2 className="spin" size={18} /> : <Save size={18} />}
+          目標を保存
+        </button>
       </section>
 
       <section className="panel recent-panel">
@@ -397,6 +509,49 @@ function App(): JSX.Element {
           >
             {isRecentExpanded ? '閉じる' : `さらに表示（あと${hiddenRecentMealsCount}件）`}
           </button>
+        )}
+      </section>
+
+      <section className="panel weekly-panel">
+        <div className="section-heading">
+          <div>
+            <span className="section-label">7日</span>
+            <h2>トレンド</h2>
+          </div>
+          <button
+            className="action-button secondary-action weekly-feedback-button"
+            type="button"
+            disabled={busy !== null}
+            onClick={handleWeeklyFeedback}
+          >
+            {busy === 'weekly' ? <Loader2 className="spin" size={18} /> : <MessageCircle size={18} />}
+            週次コメント
+          </button>
+        </div>
+        {weeklyTrend ? (
+          <ul className="trend-list">
+            {weeklyTrend.days.map((day) => (
+              <li key={day.date}>
+                <div>
+                  <strong>{formatShortDate(day.date)}</strong>
+                  <span>{day.count > 0 ? `${day.count}件` : '食事0件'} / 体重 {day.weight_kg === null ? '-' : `${day.weight_kg}kg`}</span>
+                </div>
+                <div className="trend-values">
+                  <span className={isOverTarget(day.total.calories_kcal, targets.calories_kcal) ? 'over' : ''}>
+                    {Math.round(day.total.calories_kcal)}{targets.calories_kcal === null ? '' : `/${Math.round(targets.calories_kcal)}`} kcal
+                  </span>
+                  <small>P{day.total.protein_g} / F{day.total.fat_g} / C{day.total.carbs_g}</small>
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="empty-text">GAS Web App 上で7日トレンドを読み込みます。</p>
+        )}
+        {weeklyReview && (
+          <p className="feedback-text">
+            前回 {formatShortDate(weeklyReview.generated_at)}: {weeklyReview.text}
+          </p>
         )}
       </section>
 
@@ -685,6 +840,30 @@ function SegmentedButton({
   );
 }
 
+function RatioField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+}): JSX.Element {
+  return (
+    <label className="ratio-field">
+      <span>{label}</span>
+      <input
+        value={value}
+        type="number"
+        min="0"
+        step="1"
+        inputMode="numeric"
+        onChange={(event) => onChange(normalizeNumber(event.target.value))}
+      />
+    </label>
+  );
+}
+
 function buildPayload({
   datetime,
   mealType,
@@ -746,6 +925,21 @@ function buildQuickPayload(meal: SavedMeal): SaveMealPayload {
     carbs_g: meal.carbs_g,
     source: 'manual',
     breakdown_json: meal.breakdown_json,
+  };
+}
+
+function buildTargetsPayload(targets: NutritionTotal): SaveTargetsPayload {
+  nutritionKeys.forEach(({ key, label }) => {
+    if (!Number.isFinite(targets[key]) || targets[key] <= 0) {
+      throw new Error(`目標${label}を入力してください。`);
+    }
+  });
+
+  return {
+    calories_kcal: Math.round(targets.calories_kcal),
+    protein_g: roundToTenth(targets.protein_g),
+    fat_g: roundToTenth(targets.fat_g),
+    carbs_g: roundToTenth(targets.carbs_g),
   };
 }
 
@@ -826,6 +1020,23 @@ function calculateTotal(items: NutritionItem[], servings: number[]): NutritionTo
   );
 }
 
+function calculateTargetsFromRatio(
+  caloriesInput: string,
+  ratio: { protein: number; fat: number; carbs: number },
+): NutritionTotal {
+  const calories = normalizeNumber(caloriesInput);
+  const ratioTotal = ratio.protein + ratio.fat + ratio.carbs;
+  const safeRatio = ratioTotal > 0 ? ratio : defaultPfcRatio;
+  const safeTotal = ratioTotal > 0 ? ratioTotal : 100;
+
+  return {
+    calories_kcal: Math.round(calories),
+    protein_g: roundToTenth((calories * (safeRatio.protein / safeTotal)) / 4),
+    fat_g: roundToTenth((calories * (safeRatio.fat / safeTotal)) / 9),
+    carbs_g: roundToTenth((calories * (safeRatio.carbs / safeTotal)) / 4),
+  };
+}
+
 function applyServings(items: NutritionItem[], servings: number[]): NutritionItem[] {
   return items.map((item, index) => {
     const serving = servings[index] || 1;
@@ -875,6 +1086,59 @@ function formatMealTime(timestamp: string): string {
     hour: '2-digit',
     minute: '2-digit',
   }).format(date);
+}
+
+function formatShortDate(value: string): string {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat('ja-JP', {
+    month: 'numeric',
+    day: 'numeric',
+  }).format(date);
+}
+
+function formatTargetProgress(actual: number, target: number | null, unit: string): string {
+  if (target === null) {
+    return `${roundDisplay(actual)} ${unit}`;
+  }
+
+  const diff = roundToTenth(target - actual);
+  const suffix = diff >= 0 ? `あと${roundDisplay(diff)}` : `超過${roundDisplay(Math.abs(diff))}`;
+  return `${roundDisplay(actual)} / ${roundDisplay(target)} ${unit}（${suffix}）`;
+}
+
+function roundDisplay(value: number): string {
+  return Number.isInteger(value) ? String(value) : String(roundToTenth(value));
+}
+
+function hasCompleteTargets(targets: NutritionTargets): boolean {
+  return nutritionKeys.every(({ key }) => targets[key] !== null);
+}
+
+function derivePfcRatio(targets: NutritionTargets): { protein: number; fat: number; carbs: number } {
+  if (
+    targets.calories_kcal === null ||
+    targets.protein_g === null ||
+    targets.fat_g === null ||
+    targets.carbs_g === null ||
+    targets.calories_kcal <= 0
+  ) {
+    return defaultPfcRatio;
+  }
+
+  return {
+    protein: Math.round((targets.protein_g * 4 * 100) / targets.calories_kcal),
+    fat: Math.round((targets.fat_g * 9 * 100) / targets.calories_kcal),
+    carbs: Math.round((targets.carbs_g * 4 * 100) / targets.calories_kcal),
+  };
+}
+
+function isOverTarget(actual: number, target: number | null): boolean {
+  return target !== null && actual > target;
 }
 
 function parseBreakdownItems(breakdownJson: string): NutritionItem[] {

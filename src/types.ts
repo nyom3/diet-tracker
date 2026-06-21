@@ -19,6 +19,20 @@ export type NutritionTotal = {
   carbs_g: number;
 };
 
+export type NutritionTargets = {
+  calories_kcal: number | null;
+  protein_g: number | null;
+  fat_g: number | null;
+  carbs_g: number | null;
+};
+
+export type SaveTargetsPayload = {
+  calories_kcal: number;
+  protein_g: number;
+  fat_g: number;
+  carbs_g: number;
+};
+
 export type NutritionResult = {
   display_name?: string;
   items?: NutritionItem[];
@@ -53,6 +67,28 @@ export type TodaySummary = {
 
 export type DailyFeedback = TodaySummary & {
   feedback: string;
+};
+
+export type WeeklyReview = {
+  generated_at: string;
+  window_start: string;
+  window_end: string;
+  text: string;
+};
+
+export type WeeklyTrendDay = {
+  date: string;
+  count: number;
+  total: NutritionTotal;
+  weight_kg: number | null;
+};
+
+export type WeeklyTrend = {
+  window_start: string;
+  window_end: string;
+  targets: NutritionTargets;
+  days: WeeklyTrendDay[];
+  latest_review: WeeklyReview | null;
 };
 
 export type ImagePayload = {
