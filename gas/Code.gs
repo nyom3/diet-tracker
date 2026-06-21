@@ -1,4 +1,7 @@
 const FOOD_LOG_SHEET_NAME = 'food_log';
+const TARGETS_SHEET_NAME = 'targets';
+const HEALTH_DATA_SHEET_NAME = 'health_data';
+const WEEKLY_REVIEW_SHEET_NAME = 'weekly_review';
 const GEMINI_MODEL = 'gemini-2.5-flash';
 const GEMINI_ENDPOINT =
   'https://generativelanguage.googleapis.com/v1beta/models/' +
@@ -17,6 +20,8 @@ const FOOD_LOG_HEADERS = [
   'source',
   'breakdown_json',
 ];
+const TARGET_KEYS = ['calories_kcal', 'protein_g', 'fat_g', 'carbs_g'];
+const WEEKLY_REVIEW_HEADERS = ['generated_at', 'window_start', 'window_end', 'text'];
 
 function doGet() {
   return HtmlService.createHtmlOutputFromFile('index')
@@ -107,6 +112,147 @@ function getTodaySummary() {
     count: meals.length,
     total: total,
   };
+}
+
+function getTargets() {
+  const sheet = getTargetsSheet();
+  const lastRow = sheet.getLastRow();
+  const targets = createEmptyTargets();
+
+  if (lastRow < 2) {
+    return targets;
+  }
+
+  const values = sheet.getRange(2, 1, lastRow - 1, 2).getValues();
+  values.forEach(function (row) {
+    const key = String(row[0] || '').trim();
+
+    if (TARGET_KEYS.indexOf(key) !== -1 && row[1] !== '') {
+      targets[key] = toNonNegativeNumber(row[1], key);
+    }
+  });
+
+  return targets;
+}
+
+function saveTargets(data) {
+  const targets = validateTargets(data);
+  const sheet = getTargetsSheet();
+  const values = TARGET_KEYS.map(function (key) {
+    return [key, targets[key]];
+  });
+
+  if (sheet.getLastRow() > 1) {
+    sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).clearContent();
+  }
+
+  sheet.getRange(2, 1, values.length, 2).setValues(values);
+  return { ok: true, targets: targets };
+}
+
+function getWeeklyTrend() {
+  const today = new Date();
+  const timezone = Session.getScriptTimeZone();
+  const windowEnd = Utilities.formatDate(today, timezone, 'yyyy-MM-dd');
+  const windowStartDate = addDays(startOfLocalDay(today), -6);
+  const windowStart = Utilities.formatDate(windowStartDate, timezone, 'yyyy-MM-dd');
+  const days = createTrendDays(windowStartDate);
+  const meals = listMealsForWindow(windowStartDate, today);
+  const healthByDate = readHealthDataByDate(windowStart, windowEnd);
+
+  meals.forEach(function (meal) {
+    const timestamp = new Date(meal.timestamp);
+    const dateKey = Utilities.formatDate(timestamp, timezone, 'yyyy-MM-dd');
+    const day = days.filter(function (candidate) { return candidate.date === dateKey; })[0];
+
+    if (!day) {
+      return;
+    }
+
+    day.count += 1;
+    day.total = sumMeals([day.total, meal]);
+  });
+
+  days.forEach(function (day) {
+    day.weight_kg = healthByDate[day.date] === undefined ? null : healthByDate[day.date];
+  });
+
+  return {
+    window_start: windowStart,
+    window_end: windowEnd,
+    targets: getTargets(),
+    days: days,
+    latest_review: getLatestWeeklyReview(),
+  };
+}
+
+function getLatestWeeklyReview() {
+  const sheet = getWeeklyReviewSheet();
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow < 2) {
+    return null;
+  }
+
+  const row = sheet.getRange(lastRow, 1, 1, WEEKLY_REVIEW_HEADERS.length).getValues()[0];
+  return rowToWeeklyReview(row);
+}
+
+function summarizeWeeklyFeedback() {
+  const trend = getWeeklyTrend();
+  const activeDays = trend.days.filter(function (day) {
+    return day.count > 0;
+  });
+
+  if (activeDays.length === 0) {
+    return {
+      generated_at: new Date().toISOString(),
+      window_start: trend.window_start,
+      window_end: trend.window_end,
+      text: '直近7日間の食事記録がありません。',
+    };
+  }
+
+  const weeklyTotal = sumMeals(trend.days.map(function (day) { return day.total; }));
+  const dailyAverage = {
+    calories_kcal: Math.round(weeklyTotal.calories_kcal / trend.days.length),
+    protein_g: roundToTenth(weeklyTotal.protein_g / trend.days.length),
+    fat_g: roundToTenth(weeklyTotal.fat_g / trend.days.length),
+    carbs_g: roundToTenth(weeklyTotal.carbs_g / trend.days.length),
+  };
+  const targetLines = TARGET_KEYS.map(function (key) {
+    const targetValue = trend.targets[key];
+    if (targetValue === null) {
+      return key + ': 目標未設定';
+    }
+
+    return key + ': 平均 ' + dailyAverage[key] + ' / 目標 ' + targetValue + ' / 差分 ' + roundToTenth(dailyAverage[key] - targetValue);
+  });
+  const prompt =
+    'あなたは食事記録を見て短く実用的にコメントする栄養士です。\n' +
+    '今日を含む直近7日について、下記のGAS集計済み数値だけを根拠に、日本語で3文以内の週次コメントを書いてください。\n' +
+    '断定しすぎず、医療助言ではなく一般的な食事コメントとして書いてください。\n\n' +
+    '期間: ' + trend.window_start + ' 〜 ' + trend.window_end + '\n' +
+    '記録あり日数: ' + activeDays.length + ' / 7\n' +
+    '週合計: ' + Math.round(weeklyTotal.calories_kcal) + 'kcal / P' + weeklyTotal.protein_g + 'g / F' + weeklyTotal.fat_g + 'g / C' + weeklyTotal.carbs_g + 'g\n' +
+    '日平均: ' + Math.round(dailyAverage.calories_kcal) + 'kcal / P' + dailyAverage.protein_g + 'g / F' + dailyAverage.fat_g + 'g / C' + dailyAverage.carbs_g + 'g\n' +
+    '目標差分:\n- ' + targetLines.join('\n- ');
+  const review = {
+    generated_at: new Date().toISOString(),
+    window_start: trend.window_start,
+    window_end: trend.window_end,
+    text: callGeminiText(prompt),
+  };
+  const sheet = getWeeklyReviewSheet();
+
+  sheet.appendRow([
+    review.generated_at,
+    review.window_start,
+    review.window_end,
+    review.text,
+  ]);
+
+  return review;
 }
 
 function summarizeTodayFeedback() {
@@ -284,6 +430,42 @@ function callGeminiText(prompt) {
 }
 
 function getFoodLogSheet() {
+  const spreadsheet = getSpreadsheet();
+  const sheet = spreadsheet.getSheetByName(FOOD_LOG_SHEET_NAME) || spreadsheet.insertSheet(FOOD_LOG_SHEET_NAME);
+  ensureFoodLogHeaders(sheet);
+  return sheet;
+}
+
+function getTargetsSheet() {
+  const spreadsheet = getSpreadsheet();
+  const sheet = spreadsheet.getSheetByName(TARGETS_SHEET_NAME) || spreadsheet.insertSheet(TARGETS_SHEET_NAME);
+  const headerRange = sheet.getRange(1, 1, 1, 2);
+  const headers = headerRange.getValues()[0];
+
+  if (headers[0] !== 'key' || headers[1] !== 'value') {
+    headerRange.setValues([['key', 'value']]);
+  }
+
+  return sheet;
+}
+
+function getWeeklyReviewSheet() {
+  const spreadsheet = getSpreadsheet();
+  const sheet = spreadsheet.getSheetByName(WEEKLY_REVIEW_SHEET_NAME) || spreadsheet.insertSheet(WEEKLY_REVIEW_SHEET_NAME);
+  const headerRange = sheet.getRange(1, 1, 1, WEEKLY_REVIEW_HEADERS.length);
+  const headers = headerRange.getValues()[0];
+  const shouldWriteHeaders = WEEKLY_REVIEW_HEADERS.some(function (header, index) {
+    return headers[index] !== header;
+  });
+
+  if (shouldWriteHeaders) {
+    headerRange.setValues([WEEKLY_REVIEW_HEADERS]);
+  }
+
+  return sheet;
+}
+
+function getSpreadsheet() {
   const spreadsheetId = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
   const spreadsheet = spreadsheetId
     ? SpreadsheetApp.openById(spreadsheetId)
@@ -293,9 +475,7 @@ function getFoodLogSheet() {
     throw new Error('書き込み先スプレッドシートが見つかりません。');
   }
 
-  const sheet = spreadsheet.getSheetByName(FOOD_LOG_SHEET_NAME) || spreadsheet.insertSheet(FOOD_LOG_SHEET_NAME);
-  ensureFoodLogHeaders(sheet);
-  return sheet;
+  return spreadsheet;
 }
 
 function ensureFoodLogHeaders(sheet) {
@@ -405,6 +585,70 @@ function listMealsForTodayUntil(now) {
     });
 }
 
+function listMealsForWindow(windowStartDate, windowEndDate) {
+  const sheet = getFoodLogSheet();
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow < 2) {
+    return [];
+  }
+
+  const startTime = startOfLocalDay(windowStartDate).getTime();
+  const endTime = windowEndDate.getTime();
+  const values = sheet.getRange(2, 1, lastRow - 1, FOOD_LOG_HEADERS.length).getValues();
+
+  return values
+    .map(function (row) {
+      return rowToFoodLog(row);
+    })
+    .filter(function (meal) {
+      const timestamp = new Date(meal.timestamp);
+
+      if (isNaN(timestamp.getTime())) {
+        return false;
+      }
+
+      return timestamp.getTime() >= startTime && timestamp.getTime() <= endTime;
+    });
+}
+
+function readHealthDataByDate(windowStart, windowEnd) {
+  const spreadsheet = getSpreadsheet();
+  const sheet = spreadsheet.getSheetByName(HEALTH_DATA_SHEET_NAME);
+  const result = {};
+
+  if (!sheet || sheet.getLastRow() < 2) {
+    return result;
+  }
+
+  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues();
+  values.forEach(function (row) {
+    const date = formatSheetDate(row[0]);
+
+    if (date >= windowStart && date <= windowEnd && row[1] !== '') {
+      result[date] = toNonNegativeNumber(row[1], '体重');
+    }
+  });
+
+  return result;
+}
+
+function createTrendDays(windowStartDate) {
+  const timezone = Session.getScriptTimeZone();
+  const days = [];
+
+  for (var offset = 0; offset < 7; offset += 1) {
+    days.push({
+      date: Utilities.formatDate(addDays(windowStartDate, offset), timezone, 'yyyy-MM-dd'),
+      count: 0,
+      total: createZeroTotal(),
+      weight_kg: null,
+    });
+  }
+
+  return days;
+}
+
 function sumMeals(meals) {
   return meals.reduce(
     function (sum, meal) {
@@ -422,6 +666,24 @@ function sumMeals(meals) {
       carbs_g: 0,
     },
   );
+}
+
+function createZeroTotal() {
+  return {
+    calories_kcal: 0,
+    protein_g: 0,
+    fat_g: 0,
+    carbs_g: 0,
+  };
+}
+
+function createEmptyTargets() {
+  return {
+    calories_kcal: null,
+    protein_g: null,
+    fat_g: null,
+    carbs_g: null,
+  };
 }
 
 function createMealId() {
@@ -465,6 +727,19 @@ function validateFoodLogInput(data) {
     carbs_g: toNonNegativeNumber(data.carbs_g, '炭水化物'),
     source: source,
     breakdown_json: breakdownJson,
+  };
+}
+
+function validateTargets(data) {
+  if (!data || typeof data !== 'object') {
+    throw new Error('目標データが不正です。');
+  }
+
+  return {
+    calories_kcal: toNonNegativeNumber(data.calories_kcal, '目標カロリー'),
+    protein_g: toNonNegativeNumber(data.protein_g, '目標タンパク質'),
+    fat_g: toNonNegativeNumber(data.fat_g, '目標脂質'),
+    carbs_g: toNonNegativeNumber(data.carbs_g, '目標炭水化物'),
   };
 }
 
@@ -528,6 +803,37 @@ function toNonNegativeNumber(value, label) {
 
 function roundToTenth(value) {
   return Math.round(value * 10) / 10;
+}
+
+function addDays(date, days) {
+  const nextDate = new Date(date.getTime());
+  nextDate.setDate(nextDate.getDate() + days);
+  return nextDate;
+}
+
+function startOfLocalDay(date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function formatSheetDate(value) {
+  if (value instanceof Date) {
+    return Utilities.formatDate(value, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  }
+
+  return String(value || '').trim();
+}
+
+function rowToWeeklyReview(row) {
+  const generatedAt = row[0] instanceof Date ? row[0].toISOString() : String(row[0] || '').trim();
+  const windowStart = formatSheetDate(row[1]);
+  const windowEnd = formatSheetDate(row[2]);
+
+  return {
+    generated_at: generatedAt,
+    window_start: windowStart,
+    window_end: windowEnd,
+    text: String(row[3] || '').trim(),
+  };
 }
 
 function extractJson(text) {

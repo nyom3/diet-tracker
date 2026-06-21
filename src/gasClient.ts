@@ -1,4 +1,14 @@
-import type { DailyFeedback, NutritionResult, SavedMeal, SaveMealPayload, TodaySummary } from './types';
+import type {
+  DailyFeedback,
+  NutritionResult,
+  NutritionTargets,
+  SavedMeal,
+  SaveMealPayload,
+  SaveTargetsPayload,
+  TodaySummary,
+  WeeklyReview,
+  WeeklyTrend,
+} from './types';
 
 declare global {
   interface Window {
@@ -18,7 +28,12 @@ type GoogleScriptRun = {
   listRecentMeals: (limit: number) => void;
   updateMeal: (id: string, payload: SaveMealPayload) => void;
   getTodaySummary: () => void;
+  getTargets: () => void;
+  saveTargets: (payload: SaveTargetsPayload) => void;
+  getWeeklyTrend: () => void;
+  getLatestWeeklyReview: () => void;
   summarizeTodayFeedback: () => void;
+  summarizeWeeklyFeedback: () => void;
 };
 
 export function estimateCalories(
@@ -55,9 +70,39 @@ export function getTodaySummary(): Promise<TodaySummary> {
   });
 }
 
+export function getTargets(): Promise<NutritionTargets> {
+  return callGas<NutritionTargets>((runner) => {
+    runner.getTargets();
+  });
+}
+
+export function saveTargets(payload: SaveTargetsPayload): Promise<{ ok: boolean; targets: NutritionTargets }> {
+  return callGas<{ ok: boolean; targets: NutritionTargets }>((runner) => {
+    runner.saveTargets(payload);
+  });
+}
+
+export function getWeeklyTrend(): Promise<WeeklyTrend> {
+  return callGas<WeeklyTrend>((runner) => {
+    runner.getWeeklyTrend();
+  });
+}
+
+export function getLatestWeeklyReview(): Promise<WeeklyReview | null> {
+  return callGas<WeeklyReview | null>((runner) => {
+    runner.getLatestWeeklyReview();
+  });
+}
+
 export function summarizeTodayFeedback(): Promise<DailyFeedback> {
   return callGas<DailyFeedback>((runner) => {
     runner.summarizeTodayFeedback();
+  });
+}
+
+export function summarizeWeeklyFeedback(): Promise<WeeklyReview> {
+  return callGas<WeeklyReview>((runner) => {
+    runner.summarizeWeeklyFeedback();
   });
 }
 
