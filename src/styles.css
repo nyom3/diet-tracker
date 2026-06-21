@@ -191,6 +191,57 @@ h2 {
   margin-bottom: 14px;
 }
 
+.collapsible-panel {
+  gap: 0;
+}
+
+.collapsible-heading {
+  display: flex;
+  min-height: 44px;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  padding: 0;
+  text-align: left;
+}
+
+.collapsible-heading span {
+  display: grid;
+  gap: 2px;
+}
+
+.collapsible-heading strong {
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.collapsible-heading svg {
+  flex: 0 0 auto;
+  color: var(--primary);
+  transition: transform 0.15s ease;
+}
+
+.collapsible-heading svg.expanded {
+  transform: rotate(180deg);
+}
+
+.collapsible-body {
+  display: grid;
+  gap: 12px;
+  padding-top: 12px;
+}
+
+.weekly-heading-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
 .segmented-field {
   min-width: 0;
   margin: 0;
@@ -902,6 +953,10 @@ h2 {
 
   .section-heading {
     display: grid;
+  }
+
+  .weekly-heading-row {
+    grid-template-columns: 1fr;
   }
 
   .mode-switch {
