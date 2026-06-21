@@ -142,10 +142,6 @@ function saveTargets(data) {
     return [key, targets[key]];
   });
 
-  if (sheet.getLastRow() > 1) {
-    sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).clearContent();
-  }
-
   sheet.getRange(2, 1, values.length, 2).setValues(values);
   return { ok: true, targets: targets };
 }
@@ -200,6 +196,12 @@ function getLatestWeeklyReview() {
 
 function summarizeWeeklyFeedback() {
   const trend = getWeeklyTrend();
+  const latestReview = getLatestWeeklyReview();
+
+  if (latestReview && latestReview.window_end === trend.window_end) {
+    return latestReview;
+  }
+
   const activeDays = trend.days.filter(function (day) {
     return day.count > 0;
   });
@@ -215,10 +217,10 @@ function summarizeWeeklyFeedback() {
 
   const weeklyTotal = sumMeals(trend.days.map(function (day) { return day.total; }));
   const dailyAverage = {
-    calories_kcal: Math.round(weeklyTotal.calories_kcal / trend.days.length),
-    protein_g: roundToTenth(weeklyTotal.protein_g / trend.days.length),
-    fat_g: roundToTenth(weeklyTotal.fat_g / trend.days.length),
-    carbs_g: roundToTenth(weeklyTotal.carbs_g / trend.days.length),
+    calories_kcal: Math.round(weeklyTotal.calories_kcal / activeDays.length),
+    protein_g: roundToTenth(weeklyTotal.protein_g / activeDays.length),
+    fat_g: roundToTenth(weeklyTotal.fat_g / activeDays.length),
+    carbs_g: roundToTenth(weeklyTotal.carbs_g / activeDays.length),
   };
   const targetLines = TARGET_KEYS.map(function (key) {
     const targetValue = trend.targets[key];
@@ -624,9 +626,10 @@ function readHealthDataByDate(windowStart, windowEnd) {
   const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues();
   values.forEach(function (row) {
     const date = formatSheetDate(row[0]);
+    const weight = Number(row[1]);
 
-    if (date >= windowStart && date <= windowEnd && row[1] !== '') {
-      result[date] = toNonNegativeNumber(row[1], '体重');
+    if (date >= windowStart && date <= windowEnd && row[1] !== '' && isFinite(weight) && weight >= 0) {
+      result[date] = weight;
     }
   });
 
