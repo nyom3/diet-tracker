@@ -219,10 +219,10 @@ function App(): JSX.Element {
     setItems(nextItems);
     setServings(enableStepper ? nextItems.map(() => 1) : []);
     setHasNutrition(true);
-    if (enableStepper) {
-      const autoName = result.display_name || (nextItems.length > 0 ? nextItems[0].name : '');
-      if (autoName && !displayName.trim()) setDisplayName(autoName);
-    }
+    const autoName = [result.display_name, estimationInput, nextItems[0]?.name]
+      .map((value) => value?.trim() ?? '')
+      .find(Boolean);
+    if (autoName && !displayName.trim()) setDisplayName(autoName);
   }
 
   async function handleEstimate(): Promise<void> {
