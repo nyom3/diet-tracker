@@ -85,6 +85,10 @@ const emptyTargets: NutritionTargets = {
   carbs_g: null,
 };
 
+function formatWeightKg(weightKg: number | null): string {
+  return weightKg === null ? '-' : `${weightKg.toFixed(1)}kg`;
+}
+
 function App(): JSX.Element {
   const [mealType, setMealType] = React.useState<MealType>(() => getDefaultMealType());
   const [inputMode, setInputMode] = React.useState<InputMode>('photo');
@@ -734,7 +738,7 @@ function App(): JSX.Element {
                   <li key={day.date}>
                     <div>
                       <strong>{formatShortDate(day.date)}</strong>
-                      <span>{day.count > 0 ? `${day.count}件` : '食事0件'} / 体重 {day.weight_kg === null ? '-' : `${day.weight_kg}kg`}</span>
+                      <span>{day.count > 0 ? `${day.count}件` : '食事0件'} / 体重 {formatWeightKg(day.weight_kg)}</span>
                     </div>
                     <div className="trend-values">
                       <span className={isOverTarget(day.total.calories_kcal, targets.calories_kcal) ? 'over' : ''}>

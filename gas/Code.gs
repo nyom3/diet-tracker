@@ -33,6 +33,8 @@ const FAVORITE_HEADERS = [
 ];
 const TARGET_KEYS = ['calories_kcal', 'protein_g', 'fat_g', 'carbs_g'];
 const WEEKLY_REVIEW_HEADERS = ['generated_at', 'window_start', 'window_end', 'text'];
+const MIN_VALID_WEIGHT_KG = 20;
+const MAX_VALID_WEIGHT_KG = 300;
 
 function doGet() {
   return HtmlService.createHtmlOutputFromFile('index')
@@ -749,17 +751,42 @@ function readHealthDataByDate(windowStart, windowEnd) {
     return result;
   }
 
-  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues();
+  const lastColumn = sheet.getLastColumn();
+  const headers = sheet.getRange(1, 1, 1, lastColumn).getValues()[0].map(function (header) {
+    return String(header || '').trim();
+  });
+  const weightColumnIndex = headers.indexOf('weight_kg');
+
+  if (weightColumnIndex === -1) {
+    return result;
+  }
+
+  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastColumn).getValues();
   values.forEach(function (row) {
     const date = formatSheetDate(row[0]);
-    const weight = Number(row[1]);
+    const rawWeight = row[weightColumnIndex];
+    const weight = normalizeHealthWeight(rawWeight);
 
-    if (date >= windowStart && date <= windowEnd && row[1] !== '' && isFinite(weight) && weight >= 0) {
+    if (date >= windowStart && date <= windowEnd && weight !== null) {
       result[date] = weight;
     }
   });
 
   return result;
+}
+
+function normalizeHealthWeight(value) {
+  if (value === '') {
+    return null;
+  }
+
+  const weight = Number(value);
+
+  if (!isFinite(weight) || weight < MIN_VALID_WEIGHT_KG || weight > MAX_VALID_WEIGHT_KG) {
+    return null;
+  }
+
+  return weight;
 }
 
 function createTrendDays(windowStartDate) {
