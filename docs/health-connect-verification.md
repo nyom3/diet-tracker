@@ -64,17 +64,19 @@ Play ストアで「Health Data Export」をインストール（無料）。
 
 ### エクスポート項目の設定
 
+`health_data` シートの列定義の正本は `docs/setup.md` のセットアップ数式。
+
 以下のデータ種別を選択する:
 
 | Health Connect の項目名 | `health_data` シートの対応列 |
 |---|---|
-| Weight（体重） | B: weight_kg |
-| Body Fat（体脂肪率） | C: body_fat_pct |
-| Steps（歩数） | D: steps |
-| Active Calories / Total Calories Burned | E: active_calories_kcal |
+| Steps（歩数） | B: steps |
+| Total Calories Burned | C: total_calories_kcal |
+| Weight（体重） | D: weight_kg |
+| Body Fat（体脂肪率） | E: body_fat_pct |
 
 > **注意**: Health Data Export が書き出す列名は、アプリのバージョンや設定によって異なる。
-> 実際に書き出されたヘッダー行を確認し、`health_data` シートのヘッダー（A: date, B: weight_kg, C: body_fat_pct, D: steps, E: active_calories_kcal）と一致していなければヘッダー行を手動で修正する。
+> 実際に書き出されたヘッダー行を確認し、`health_data` シートのヘッダー（A: date, B: steps, C: total_calories_kcal, D: weight_kg, E: body_fat_pct）と一致していなければ、`docs/setup.md` の数式に合わせて修正する。
 
 ### 書き出し頻度の設定
 
@@ -93,10 +95,10 @@ Play ストアで「Health Data Export」をインストール（無料）。
 ### チェックリスト
 
 - [ ] `date` 列に今日の日付が入っている
+- [ ] `steps` に歩数が入っている
+- [ ] `total_calories_kcal` に総消費カロリーが入っている
 - [ ] `weight_kg` に体重の数値が入っている
 - [ ] `body_fat_pct` に体脂肪率が入っている（オムロンが未測定なら空欄）
-- [ ] `steps` に歩数が入っている
-- [ ] `active_calories_kcal` に消費カロリーが入っている
 
 ---
 
