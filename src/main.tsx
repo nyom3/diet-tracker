@@ -85,8 +85,45 @@ const emptyTargets: NutritionTargets = {
   carbs_g: null,
 };
 
-function formatWeightKg(weightKg: number | null): string {
-  return weightKg === null ? '-' : `${weightKg.toFixed(1)}kg`;
+function formatWeightKg(weightKg: number | null | undefined): string {
+  return typeof weightKg === 'number' && Number.isFinite(weightKg) ? `${weightKg.toFixed(1)}kg` : '-';
+}
+
+type ErrorBoundaryState = {
+  hasError: boolean;
+};
+
+class AppErrorBoundary extends React.Component<React.PropsWithChildren, ErrorBoundaryState> {
+  state: ErrorBoundaryState = {
+    hasError: false,
+  };
+
+  static getDerivedStateFromError(): ErrorBoundaryState {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: unknown): void {
+    console.error('画面表示でエラーが発生しました:', error);
+  }
+
+  render(): React.ReactNode {
+    if (this.state.hasError) {
+      return (
+        <main className="app-shell error-fallback">
+          <section className="panel">
+            <p className="section-eyebrow">表示エラー</p>
+            <h1>表示の一部でエラーが発生しました。</h1>
+            <p>再読み込みしてください。入力中の内容がある場合は、ページ更新前に控えてください。</p>
+            <button className="action-button primary-action" type="button" onClick={() => window.location.reload()}>
+              再読み込み
+            </button>
+          </section>
+        </main>
+      );
+    }
+
+    return this.props.children;
+  }
 }
 
 function App(): JSX.Element {
@@ -1342,8 +1379,8 @@ function formatShortDate(value: string): string {
   }).format(date);
 }
 
-function formatTargetProgress(actual: number, target: number | null, unit: string): string {
-  if (target === null) {
+function formatTargetProgress(actual: number, target: number | null | undefined, unit: string): string {
+  if (target == null) {
     return `${roundDisplay(actual)} ${unit}`;
   }
 
@@ -1357,15 +1394,15 @@ function roundDisplay(value: number): string {
 }
 
 function hasCompleteTargets(targets: NutritionTargets): boolean {
-  return nutritionKeys.every(({ key }) => targets[key] !== null);
+  return nutritionKeys.every(({ key }) => targets[key] != null);
 }
 
 function derivePfcRatio(targets: NutritionTargets): { protein: number; fat: number; carbs: number } {
   if (
-    targets.calories_kcal === null ||
-    targets.protein_g === null ||
-    targets.fat_g === null ||
-    targets.carbs_g === null ||
+    targets.calories_kcal == null ||
+    targets.protein_g == null ||
+    targets.fat_g == null ||
+    targets.carbs_g == null ||
     targets.calories_kcal <= 0
   ) {
     return defaultPfcRatio;
@@ -1378,8 +1415,8 @@ function derivePfcRatio(targets: NutritionTargets): { protein: number; fat: numb
   };
 }
 
-function isOverTarget(actual: number, target: number | null): boolean {
-  return target !== null && actual > target;
+function isOverTarget(actual: number, target: number | null | undefined): boolean {
+  return target != null && actual > target;
 }
 
 function parseBreakdownItems(breakdownJson: string): NutritionItem[] {
@@ -1477,6 +1514,8 @@ function getErrorMessage(error: unknown): string {
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
-    <App />
+    <AppErrorBoundary>
+      <App />
+    </AppErrorBoundary>
   </React.StrictMode>,
 );
