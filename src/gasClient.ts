@@ -10,6 +10,7 @@ import type {
   TodaySummary,
   WeeklyReview,
   WeeklyTrend,
+  WeeklyTrendDay,
 } from './types';
 
 declare global {
@@ -96,19 +97,22 @@ export function getTodaySummary(): Promise<TodaySummary> {
 export function getTargets(): Promise<NutritionTargets> {
   return callGas<NutritionTargets>((runner) => {
     runner.getTargets();
-  });
+  }).then(normalizeTargets);
 }
 
 export function saveTargets(payload: SaveTargetsPayload): Promise<{ ok: boolean; targets: NutritionTargets }> {
   return callGas<{ ok: boolean; targets: NutritionTargets }>((runner) => {
     runner.saveTargets(payload);
-  });
+  }).then((result) => ({
+    ...result,
+    targets: normalizeTargets(result.targets),
+  }));
 }
 
 export function getWeeklyTrend(): Promise<WeeklyTrend> {
   return callGas<WeeklyTrend>((runner) => {
     runner.getWeeklyTrend();
-  });
+  }).then(normalizeWeeklyTrend);
 }
 
 export function getLatestWeeklyReview(): Promise<WeeklyReview | null> {
@@ -148,4 +152,33 @@ function callGas<T>(invoke: (runner: GoogleScriptRun) => void): Promise<T> {
 
     invoke(configuredRunner);
   });
+}
+
+function normalizeTargets(targets: Partial<NutritionTargets> | null | undefined): NutritionTargets {
+  return {
+    calories_kcal: normalizeNullableNumber(targets?.calories_kcal),
+    protein_g: normalizeNullableNumber(targets?.protein_g),
+    fat_g: normalizeNullableNumber(targets?.fat_g),
+    carbs_g: normalizeNullableNumber(targets?.carbs_g),
+  };
+}
+
+function normalizeWeeklyTrend(trend: WeeklyTrend): WeeklyTrend {
+  return {
+    ...trend,
+    targets: normalizeTargets(trend.targets),
+    days: trend.days.map(normalizeWeeklyTrendDay),
+    latest_review: trend.latest_review ?? null,
+  };
+}
+
+function normalizeWeeklyTrendDay(day: WeeklyTrendDay): WeeklyTrendDay {
+  return {
+    ...day,
+    weight_kg: normalizeNullableNumber(day.weight_kg),
+  };
+}
+
+function normalizeNullableNumber(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
