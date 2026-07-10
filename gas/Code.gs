@@ -3,7 +3,7 @@ const FAVORITES_SHEET_NAME = 'favorites';
 const TARGETS_SHEET_NAME = 'targets';
 const HEALTH_DATA_SHEET_NAME = 'health_data';
 const WEEKLY_REVIEW_SHEET_NAME = 'weekly_review';
-const GEMINI_MODEL = 'gemini-2.5-flash';
+const GEMINI_MODEL = 'gemini-3.5-flash';
 const GEMINI_ENDPOINT =
   'https://generativelanguage.googleapis.com/v1beta/models/' +
   GEMINI_MODEL +
@@ -324,7 +324,7 @@ function summarizeWeeklyFeedback() {
     generated_at: new Date().toISOString(),
     window_start: trend.window_start,
     window_end: trend.window_end,
-    text: callGeminiText(prompt),
+    text: callGeminiText(prompt, 'medium'),
   };
   const sheet = getWeeklyReviewSheet();
 
@@ -377,7 +377,7 @@ function summarizeTodayFeedback() {
     date: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd'),
     count: meals.length,
     total: total,
-    feedback: callGeminiText(prompt),
+    feedback: callGeminiText(prompt, 'low'),
   };
 }
 
@@ -428,8 +428,10 @@ function estimateCalories(inputText, imageBase64, imageMimeType) {
         },
       ],
       generationConfig: {
-        temperature: 0.2,
         response_mime_type: 'application/json',
+        thinkingConfig: {
+          thinkingLevel: 'low',
+        },
       },
     }),
   });
@@ -458,7 +460,7 @@ function estimateCalories(inputText, imageBase64, imageMimeType) {
   return normalizeNutritionResult(JSON.parse(extractJson(responseText)), text || '画像の食事');
 }
 
-function callGeminiText(prompt) {
+function callGeminiText(prompt, thinkingLevel) {
   const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
 
   if (!apiKey) {
@@ -483,7 +485,9 @@ function callGeminiText(prompt) {
         },
       ],
       generationConfig: {
-        temperature: 0.3,
+        thinkingConfig: {
+          thinkingLevel: thinkingLevel || 'low',
+        },
       },
     }),
   });
