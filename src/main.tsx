@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import {
   addFavorite,
+  deleteMeal,
   estimateCalories,
   getTargets,
   getTodaySummary,
@@ -60,6 +61,7 @@ const recentMealsPreviewCount = 3;
 const draftStorageKey = 'diet-tracker-meal-draft-v1';
 const targetPanelStorageKey = 'panel_target_open';
 const weeklyPanelStorageKey = 'panel_weekly_open';
+const quickUndoWindowMs = 8000;
 const nutritionKeys: Array<{ key: NutritionKey; label: string; unit: string; step: string }> = [
   { key: 'calories_kcal', label: 'カロリー', unit: 'kcal', step: '1' },
   { key: 'protein_g', label: 'タンパク質', unit: 'g', step: '0.1' },
@@ -86,6 +88,11 @@ const emptyTargets: NutritionTargets = {
 };
 
 type ResourceStatus = 'loading' | 'loaded' | 'error';
+
+type QuickUndo = {
+  id: string;
+  description: string;
+};
 
 function formatWeightKg(weightKg: number | null | undefined): string {
   return typeof weightKg === 'number' && Number.isFinite(weightKg) ? `${weightKg.toFixed(1)}kg` : '-';
@@ -165,7 +172,9 @@ function App(): JSX.Element {
     'estimate' | 'save' | 'quick' | 'favorite' | 'removeFavorite' | 'feedback' | 'targets' | 'weekly' | null
   >(null);
   const [previewUrl, setPreviewUrl] = React.useState('');
+  const [quickUndo, setQuickUndo] = React.useState<QuickUndo | null>(null);
   const draftPausedRef = React.useRef(true);
+  const quickUndoTimeoutRef = React.useRef<number | null>(null);
 
   const estimationInput = inputMode === 'photo'
     ? photoNote.trim()
@@ -200,6 +209,14 @@ function App(): JSX.Element {
 
   React.useEffect(() => {
     void refreshDashboard(false);
+  }, []);
+
+  React.useEffect(() => {
+    return () => {
+      if (quickUndoTimeoutRef.current !== null) {
+        window.clearTimeout(quickUndoTimeoutRef.current);
+      }
+    };
   }, []);
 
   React.useEffect(() => {
@@ -500,12 +517,24 @@ function App(): JSX.Element {
     setStatus({ message: '最近の記録を読み込みました。', type: 'success' });
   }
 
+  function showQuickUndo(id: string, description: string): void {
+    if (quickUndoTimeoutRef.current !== null) {
+      window.clearTimeout(quickUndoTimeoutRef.current);
+    }
+    setQuickUndo({ id, description });
+    quickUndoTimeoutRef.current = window.setTimeout(() => {
+      setQuickUndo(null);
+      quickUndoTimeoutRef.current = null;
+    }, quickUndoWindowMs);
+  }
+
   async function handleQuickRegister(meal: SavedMeal): Promise<void> {
     try {
       setBusy('quick');
       setStatus({ message: 'クイック登録中です。' });
-      await processInput(buildQuickPayload(meal));
+      const result = await processInput(buildQuickPayload(meal));
       await refreshDashboard(false);
+      showQuickUndo(result.id, meal.description);
       setStatus({ message: 'クイック登録しました。', type: 'success' });
     } catch (error) {
       setStatus({ message: getErrorMessage(error), type: 'error' });
@@ -518,9 +547,36 @@ function App(): JSX.Element {
     try {
       setBusy('quick');
       setStatus({ message: 'お気に入りを登録中です。' });
-      await processInput(buildQuickPayload(favorite));
+      const result = await processInput(buildQuickPayload(favorite));
       await refreshDashboard(false);
+      showQuickUndo(result.id, favorite.description);
       setStatus({ message: 'お気に入りから登録しました。', type: 'success' });
+    } catch (error) {
+      setStatus({ message: getErrorMessage(error), type: 'error' });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleUndoQuickRegister(): Promise<void> {
+    if (!quickUndo) {
+      return;
+    }
+
+    const { id, description } = quickUndo;
+
+    if (quickUndoTimeoutRef.current !== null) {
+      window.clearTimeout(quickUndoTimeoutRef.current);
+      quickUndoTimeoutRef.current = null;
+    }
+    setQuickUndo(null);
+
+    try {
+      setBusy('quick');
+      setStatus({ message: '取り消し中です。' });
+      await deleteMeal(id);
+      await refreshDashboard(false);
+      setStatus({ message: `${description}の登録を取り消しました。`, type: 'success' });
     } catch (error) {
       setStatus({ message: getErrorMessage(error), type: 'error' });
     } finally {
@@ -947,6 +1003,20 @@ function App(): JSX.Element {
           </button>
         </div>
       </form>
+
+      {quickUndo && (
+        <div className="quick-undo-banner" role="status" aria-live="polite">
+          <span>{quickUndo.description}を登録しました。</span>
+          <button
+            type="button"
+            className="quick-undo-button"
+            disabled={busy !== null}
+            onClick={() => void handleUndoQuickRegister()}
+          >
+            取り消す
+          </button>
+        </div>
+      )}
 
       <section className="panel recent-panel">
         <div className="section-heading">

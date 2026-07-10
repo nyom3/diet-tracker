@@ -680,6 +680,35 @@ h2 {
   white-space: nowrap;
 }
 
+.quick-undo-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+  border: 1px solid rgba(36, 107, 72, 0.22);
+  border-radius: 8px;
+  background: rgba(216, 240, 122, 0.28);
+  padding: 10px 12px;
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.quick-undo-button {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  padding: 0 14px;
+  border: 1px solid rgba(36, 107, 72, 0.24);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
 .edit-banner {
   display: flex;
   align-items: center;

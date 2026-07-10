@@ -184,6 +184,24 @@ function updateMeal(id, data) {
   return { ok: true, id: mealId };
 }
 
+function deleteMeal(id) {
+  const mealId = String(id || '').trim();
+
+  if (!mealId) {
+    throw new Error('削除対象のidが不正です。');
+  }
+
+  const sheet = getFoodLogSheet();
+  const rowIndex = findFoodLogRowById(sheet, mealId);
+
+  if (rowIndex < 0) {
+    throw new Error('削除対象の食事記録が見つかりません。');
+  }
+
+  sheet.deleteRow(rowIndex);
+  return { ok: true, id: mealId };
+}
+
 function getTodaySummary() {
   const meals = listMealsForTodayUntil(new Date());
   const total = sumMeals(meals);
