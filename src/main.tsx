@@ -85,6 +85,8 @@ const emptyTargets: NutritionTargets = {
   carbs_g: null,
 };
 
+type ResourceStatus = 'loading' | 'loaded' | 'error';
+
 function formatWeightKg(weightKg: number | null | undefined): string {
   return typeof weightKg === 'number' && Number.isFinite(weightKg) ? `${weightKg.toFixed(1)}kg` : '-';
 }
@@ -153,8 +155,11 @@ function App(): JSX.Element {
   const [isWeeklyPanelOpen, setIsWeeklyPanelOpen] = React.useState(() => readBooleanStorage(weeklyPanelStorageKey, false));
   const [dailyFeedback, setDailyFeedback] = React.useState<DailyFeedback | null>(null);
   const [selectedMealId, setSelectedMealId] = React.useState('');
-  const [loadingRecent, setLoadingRecent] = React.useState(false);
-  const [loadingFavorites, setLoadingFavorites] = React.useState(false);
+  const [recentStatus, setRecentStatus] = React.useState<ResourceStatus>('loading');
+  const [favoritesStatus, setFavoritesStatus] = React.useState<ResourceStatus>('loading');
+  const [summaryStatus, setSummaryStatus] = React.useState<ResourceStatus>('loading');
+  const [targetsStatus, setTargetsStatus] = React.useState<ResourceStatus>('loading');
+  const [weeklyStatus, setWeeklyStatus] = React.useState<ResourceStatus>('loading');
   const [status, setStatus] = React.useState<{ message: string; type?: 'success' | 'error' }>({ message: '' });
   const [busy, setBusy] = React.useState<
     'estimate' | 'save' | 'quick' | 'favorite' | 'removeFavorite' | 'feedback' | 'targets' | 'weekly' | null
@@ -375,38 +380,98 @@ function App(): JSX.Element {
     setHasNutrition(true);
   }
 
-  async function refreshDashboard(showStatus: boolean): Promise<void> {
+  async function loadRecentMeals(): Promise<boolean> {
+    setRecentStatus('loading');
     try {
-      setLoadingRecent(true);
-      setLoadingFavorites(true);
-      const [meals, nextFavorites, summary, nextTargets, trend] = await Promise.all([
-        listRecentMeals(10),
-        listFavorites(),
-        getTodaySummary(),
-        getTargets(),
-        getWeeklyTrend(),
-      ]);
+      const meals = await listRecentMeals(10);
       setRecentMeals(meals);
+      setRecentStatus('loaded');
+      return true;
+    } catch (error) {
+      console.warn('最近の記録の読み込みに失敗しました:', error);
+      setRecentStatus('error');
+      return false;
+    }
+  }
+
+  async function loadFavorites(): Promise<boolean> {
+    setFavoritesStatus('loading');
+    try {
+      const nextFavorites = await listFavorites();
       setFavorites(nextFavorites);
+      setFavoritesStatus('loaded');
+      return true;
+    } catch (error) {
+      console.warn('お気に入りの読み込みに失敗しました:', error);
+      setFavoritesStatus('error');
+      return false;
+    }
+  }
+
+  async function loadSummary(): Promise<boolean> {
+    setSummaryStatus('loading');
+    try {
+      const summary = await getTodaySummary();
       setTodaySummary(summary);
+      setSummaryStatus('loaded');
+      return true;
+    } catch (error) {
+      console.warn('今日の集計の読み込みに失敗しました:', error);
+      setSummaryStatus('error');
+      return false;
+    }
+  }
+
+  async function loadTargets(): Promise<boolean> {
+    setTargetsStatus('loading');
+    try {
+      const nextTargets = await getTargets();
       setTargets(nextTargets);
       setTargetCaloriesInput(nextTargets.calories_kcal === null ? '' : String(Math.round(nextTargets.calories_kcal)));
       setPfcRatio(derivePfcRatio(nextTargets));
+      setTargetsStatus('loaded');
+      return true;
+    } catch (error) {
+      console.warn('目標の読み込みに失敗しました:', error);
+      setTargetsStatus('error');
+      return false;
+    }
+  }
+
+  async function loadWeekly(): Promise<boolean> {
+    setWeeklyStatus('loading');
+    try {
+      const trend = await getWeeklyTrend();
       setWeeklyTrend(trend);
       setWeeklyReview(trend.latest_review);
-      if (showStatus) {
-        setStatus({ message: '記録状況を更新しました。', type: 'success' });
-      }
+      setWeeklyStatus('loaded');
+      return true;
     } catch (error) {
-      if (showStatus) {
-        setStatus({ message: getErrorMessage(error), type: 'error' });
-      } else {
-        console.warn('記録状況の読み込みに失敗しました:', error);
-      }
-    } finally {
-      setLoadingRecent(false);
-      setLoadingFavorites(false);
+      console.warn('週次トレンドの読み込みに失敗しました:', error);
+      setWeeklyStatus('error');
+      return false;
     }
+  }
+
+  async function refreshDashboard(showStatus: boolean): Promise<void> {
+    const results = await Promise.all([
+      loadRecentMeals(),
+      loadFavorites(),
+      loadSummary(),
+      loadTargets(),
+      loadWeekly(),
+    ]);
+
+    if (!showStatus) {
+      return;
+    }
+
+    const hasFailure = results.some((ok) => !ok);
+    setStatus(
+      hasFailure
+        ? { message: '一部のデータを読み込めませんでした。各パネルの再試行をお試しください。', type: 'error' }
+        : { message: '記録状況を更新しました。', type: 'success' },
+    );
   }
 
   function loadMealForEdit(meal: SavedMeal): void {
@@ -552,6 +617,20 @@ function App(): JSX.Element {
       </header>
 
       <section className="panel today-panel">
+        <PanelStatusNote
+          status={summaryStatus}
+          hasData={todaySummary !== null}
+          loadingText="今日の記録を読み込み中です。"
+          errorText="今日の記録を読み込めませんでした。"
+          onRetry={() => void loadSummary()}
+        />
+        <PanelStatusNote
+          status={targetsStatus}
+          hasData={hasTargets}
+          loadingText="目標を読み込み中です。"
+          errorText="目標を読み込めませんでした。"
+          onRetry={() => void loadTargets()}
+        />
         <div>
           <span className="section-label">今日</span>
           <h2>
@@ -570,7 +649,9 @@ function App(): JSX.Element {
               </span>
             </small>
           </h2>
-          {!hasTargets && <p className="target-empty-note">目標を設定すると残り/超過を表示します。</p>}
+          {!hasTargets && targetsStatus === 'loaded' && (
+            <p className="target-empty-note">目標を設定すると残り/超過を表示します。</p>
+          )}
         </div>
         <button
           className="action-button secondary-action feedback-action"
@@ -879,9 +960,16 @@ function App(): JSX.Element {
             aria-label="最近の記録を更新"
             onClick={() => void refreshDashboard(true)}
           >
-            {loadingRecent || loadingFavorites ? <Loader2 className="spin" size={18} /> : <RefreshCw size={18} />}
+            {recentStatus === 'loading' || favoritesStatus === 'loading' ? <Loader2 className="spin" size={18} /> : <RefreshCw size={18} />}
           </button>
         </div>
+        <PanelStatusNote
+          status={recentStatus}
+          hasData={recentMeals.length > 0}
+          loadingText="最近の記録を読み込み中です。"
+          errorText="最近の記録を読み込めませんでした。"
+          onRetry={() => void loadRecentMeals()}
+        />
         {recentMeals.length > 0 ? (
           <ul className="recent-list">
             {visibleRecentMeals.map((meal) => (
@@ -917,7 +1005,7 @@ function App(): JSX.Element {
             ))}
           </ul>
         ) : (
-          <p className="empty-text">GAS Web App 上で最近の記録を読み込みます。</p>
+          recentStatus === 'loaded' && <p className="empty-text">まだ記録がありません。食事を保存するとここに表示されます。</p>
         )}
         {hiddenRecentMealsCount > 0 && (
           <button
@@ -938,6 +1026,13 @@ function App(): JSX.Element {
             <h2>お気に入り</h2>
           </div>
         </div>
+        <PanelStatusNote
+          status={favoritesStatus}
+          hasData={favorites.length > 0}
+          loadingText="お気に入りを読み込み中です。"
+          errorText="お気に入りを読み込めませんでした。"
+          onRetry={() => void loadFavorites()}
+        />
         {favorites.length > 0 ? (
           <ul className="recent-list">
             {favorites.map((favorite) => (
@@ -973,7 +1068,9 @@ function App(): JSX.Element {
             ))}
           </ul>
         ) : (
-          <p className="empty-text">最近の記録からお気に入りに追加すると、ここからワンタップ登録できます。</p>
+          favoritesStatus === 'loaded' && (
+            <p className="empty-text">最近の記録からお気に入りに追加すると、ここからワンタップ登録できます。</p>
+          )
         )}
       </section>
 
@@ -990,6 +1087,13 @@ function App(): JSX.Element {
           </span>
           <ChevronDown className={isTargetPanelOpen ? 'expanded' : ''} size={18} aria-hidden="true" />
         </button>
+        <PanelStatusNote
+          status={targetsStatus}
+          hasData={hasTargets}
+          loadingText="目標を読み込み中です。"
+          errorText="目標を読み込めませんでした。"
+          onRetry={() => void loadTargets()}
+        />
         {isTargetPanelOpen && (
           <div className="collapsible-body">
             <div className="target-grid">
@@ -1048,6 +1152,13 @@ function App(): JSX.Element {
             週次コメント
           </button>
         </div>
+        <PanelStatusNote
+          status={weeklyStatus}
+          hasData={weeklyTrend !== null}
+          loadingText="7日トレンドを読み込み中です。"
+          errorText="7日トレンドを読み込めませんでした。"
+          onRetry={() => void loadWeekly()}
+        />
         {isWeeklyPanelOpen && (
           <div className="collapsible-body">
             {weeklyTrend ? (
@@ -1068,7 +1179,7 @@ function App(): JSX.Element {
                 ))}
               </ul>
             ) : (
-              <p className="empty-text">GAS Web App 上で7日トレンドを読み込みます。</p>
+              weeklyStatus === 'loaded' && <p className="empty-text">直近7日間の記録がありません。</p>
             )}
             {weeklyReview && (
               <p className="feedback-text">
@@ -1080,6 +1191,41 @@ function App(): JSX.Element {
       </section>
     </main>
   );
+}
+
+function PanelStatusNote({
+  status,
+  hasData,
+  loadingText,
+  errorText,
+  onRetry,
+}: {
+  status: ResourceStatus;
+  hasData: boolean;
+  loadingText: string;
+  errorText: string;
+  onRetry: () => void;
+}): JSX.Element | null {
+  if (status === 'loading' && !hasData) {
+    return (
+      <p className="panel-status" aria-live="polite">
+        {loadingText}
+      </p>
+    );
+  }
+
+  if (status === 'error') {
+    return (
+      <p className="panel-status panel-status-error" role="alert">
+        <span>{errorText}</span>
+        <button type="button" className="retry-button" onClick={onRetry}>
+          再試行
+        </button>
+      </p>
+    );
+  }
+
+  return null;
 }
 
 function SegmentedGroup({ label, children }: { label: string; children: React.ReactNode }): JSX.Element {
