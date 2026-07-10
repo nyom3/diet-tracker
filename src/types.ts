@@ -37,6 +37,7 @@ export type NutritionResult = {
   display_name?: string;
   items?: NutritionItem[];
   total?: NutritionTotal;
+  fallback_notice?: string;
 } & Partial<NutritionTotal>;
 
 export type SaveMealPayload = {
@@ -85,6 +86,7 @@ export type TodaySummary = {
 
 export type DailyFeedback = TodaySummary & {
   feedback: string;
+  fallback_notice?: string;
 };
 
 export type WeeklyReview = {
@@ -92,6 +94,7 @@ export type WeeklyReview = {
   window_start: string;
   window_end: string;
   text: string;
+  fallback_notice?: string;
 };
 
 export type WeeklyTrendDay = {
