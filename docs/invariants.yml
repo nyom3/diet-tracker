@@ -81,3 +81,11 @@
   rationale: GAS Web App は iframe 配信のため、_top 指定が無いとリンク遷移がフレーム内に閉じ操作が壊れる
   check: ビルド元 index.html の <head> に <base target="_top"> が維持され、生成物 gas/index.html にも反映されている
   ref: AGENTS.md
+
+- id: GAS_NULLABLE_BOUNDARY
+  statement: google.script.run を渡る nullable フィールドは client で undefined になりうる。guard は == null（null/undefined 両対応）か境界正規化とし、<App/> は ErrorBoundary でラップする
+  severity: normal
+  triggers: [gasClient変更, nullable型追加, フロント変更, GAS戻り値変更, 新規nullableAPI]
+  rationale: GAS google.script.run は null プロパティをシリアライズ時に drop し client で undefined になる。=== null guard は undefined を取りこぼしクラッシュを招く。ErrorBoundary が無いと単一 throw でツリー全体が unmount される（#29/#30 の教訓）
+  check: google.script.run を渡る nullable フィールドの client guard が == null か typeof 等で undefined を包含し、GAS 呼び出し境界（gasClient.ts）で null drop を正規化するか各呼び出し元 guard が undefined 安全であり、src/main.tsx の最外 render に ErrorBoundary が存在する
+  ref: AGENTS.md
