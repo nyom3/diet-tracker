@@ -28,6 +28,7 @@ type GoogleScriptRun = {
   withFailureHandler: (handler: (error: Error) => void) => GoogleScriptRun;
   estimateCalories: (description: string, imageBase64: string, imageMimeType: string) => void;
   processInput: (payload: SaveMealPayload) => void;
+  deleteMeal: (id: string) => void;
   listRecentMeals: (limit: number) => void;
   listFavorites: () => void;
   addFavorite: (payload: FavoriteMealPayload) => void;
@@ -55,6 +56,12 @@ export function estimateCalories(
 export function processInput(payload: SaveMealPayload): Promise<{ ok: boolean; id: string }> {
   return callGas<{ ok: boolean; id: string }>((runner) => {
     runner.processInput(payload);
+  });
+}
+
+export function deleteMeal(id: string): Promise<{ ok: boolean; id: string }> {
+  return callGas<{ ok: boolean; id: string }>((runner) => {
+    runner.deleteMeal(id);
   });
 }
 
