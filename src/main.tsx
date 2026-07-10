@@ -586,218 +586,6 @@ function App(): JSX.Element {
         )}
       </section>
 
-      <section className={`panel target-panel collapsible-panel ${isTargetPanelOpen ? 'open' : ''}`} aria-expanded={isTargetPanelOpen}>
-        <button
-          className="collapsible-heading"
-          type="button"
-          aria-expanded={isTargetPanelOpen}
-          onClick={toggleTargetPanel}
-        >
-          <span>
-            <span className="section-label">目標</span>
-            <strong>1日の基準</strong>
-          </span>
-          <ChevronDown className={isTargetPanelOpen ? 'expanded' : ''} size={18} aria-hidden="true" />
-        </button>
-        {isTargetPanelOpen && (
-          <div className="collapsible-body">
-            <div className="target-grid">
-              <label className="field">
-                <span>目標 kcal</span>
-                <input
-                  value={targetCaloriesInput}
-                  type="number"
-                  min="0"
-                  step="1"
-                  inputMode="numeric"
-                  onChange={(event) => setTargetCaloriesInput(event.target.value)}
-                />
-              </label>
-              <div className="ratio-grid">
-                <RatioField label="P%" value={pfcRatio.protein} onChange={(value) => setPfcRatio({ ...pfcRatio, protein: value })} />
-                <RatioField label="F%" value={pfcRatio.fat} onChange={(value) => setPfcRatio({ ...pfcRatio, fat: value })} />
-                <RatioField label="C%" value={pfcRatio.carbs} onChange={(value) => setPfcRatio({ ...pfcRatio, carbs: value })} />
-              </div>
-            </div>
-            <div className="target-preview">
-              <span>{Math.round(calculatedTargets.calories_kcal)} kcal</span>
-              <span>P {calculatedTargets.protein_g}g</span>
-              <span>F {calculatedTargets.fat_g}g</span>
-              <span>C {calculatedTargets.carbs_g}g</span>
-            </div>
-            <button className="action-button secondary-action" type="button" disabled={busy !== null} onClick={handleSaveTargets}>
-              {busy === 'targets' ? <Loader2 className="spin" size={18} /> : <Save size={18} />}
-              目標を保存
-            </button>
-          </div>
-        )}
-      </section>
-
-      <section className="panel recent-panel">
-        <div className="section-heading">
-          <div>
-            <span className="section-label">履歴</span>
-            <h2>最近の記録</h2>
-          </div>
-          <button
-            className="icon-button"
-            type="button"
-            aria-label="最近の記録を更新"
-            onClick={() => void refreshDashboard(true)}
-          >
-            {loadingRecent || loadingFavorites ? <Loader2 className="spin" size={18} /> : <RefreshCw size={18} />}
-          </button>
-        </div>
-        {recentMeals.length > 0 ? (
-          <ul className="recent-list">
-            {visibleRecentMeals.map((meal) => (
-              <li key={meal.id}>
-                <button className="recent-edit-button" type="button" onClick={() => loadMealForEdit(meal)}>
-                  <History size={18} />
-                  <span>
-                    <strong>{meal.description}</strong>
-                    <em>{formatMealTime(meal.timestamp)} / {meal.meal_type} / {Math.round(meal.calories_kcal)} kcal</em>
-                  </span>
-                </button>
-                <div className="meal-action-row">
-                  <button
-                    className="favorite-add-button"
-                    type="button"
-                    disabled={busy !== null}
-                    onClick={() => void handleAddFavorite(meal)}
-                  >
-                    {busy === 'favorite' ? <Loader2 className="spin" size={16} /> : <Star size={16} />}
-                    お気に入り追加
-                  </button>
-                  <button
-                    className="quick-register-button"
-                    type="button"
-                    disabled={busy !== null}
-                    onClick={() => void handleQuickRegister(meal)}
-                  >
-                    {busy === 'quick' ? <Loader2 className="spin" size={16} /> : <Zap size={16} />}
-                    登録
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="empty-text">GAS Web App 上で最近の記録を読み込みます。</p>
-        )}
-        {hiddenRecentMealsCount > 0 && (
-          <button
-            className="recent-toggle-button"
-            type="button"
-            aria-expanded={isRecentExpanded}
-            onClick={() => setIsRecentExpanded((expanded) => !expanded)}
-          >
-            {isRecentExpanded ? '閉じる' : `さらに表示（あと${hiddenRecentMealsCount}件）`}
-          </button>
-        )}
-      </section>
-
-      <section className="panel favorite-panel">
-        <div className="section-heading">
-          <div>
-            <span className="section-label">定番</span>
-            <h2>お気に入り</h2>
-          </div>
-        </div>
-        {favorites.length > 0 ? (
-          <ul className="recent-list">
-            {favorites.map((favorite) => (
-              <li key={favorite.id}>
-                <div className="favorite-info">
-                  <Star size={18} />
-                  <span>
-                    <strong>{favorite.description}</strong>
-                    <em>{Math.round(favorite.calories_kcal)} kcal / P{favorite.protein_g} / F{favorite.fat_g} / C{favorite.carbs_g}</em>
-                  </span>
-                </div>
-                <div className="meal-action-row">
-                  <button
-                    className="quick-register-button"
-                    type="button"
-                    disabled={busy !== null}
-                    onClick={() => void handleQuickRegisterFavorite(favorite)}
-                  >
-                    {busy === 'quick' ? <Loader2 className="spin" size={16} /> : <Zap size={16} />}
-                    登録
-                  </button>
-                  <button
-                    className="favorite-remove-button"
-                    type="button"
-                    disabled={busy !== null}
-                    onClick={() => void handleRemoveFavorite(favorite)}
-                  >
-                    {busy === 'removeFavorite' ? <Loader2 className="spin" size={16} /> : <Trash2 size={16} />}
-                    削除
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="empty-text">最近の記録からお気に入りに追加すると、ここからワンタップ登録できます。</p>
-        )}
-      </section>
-
-      <section className={`panel weekly-panel collapsible-panel ${isWeeklyPanelOpen ? 'open' : ''}`} aria-expanded={isWeeklyPanelOpen}>
-        <div className="weekly-heading-row">
-          <button
-            className="collapsible-heading"
-            type="button"
-            aria-expanded={isWeeklyPanelOpen}
-            onClick={toggleWeeklyPanel}
-          >
-            <span>
-              <span className="section-label">7日</span>
-              <strong>トレンド</strong>
-            </span>
-            <ChevronDown className={isWeeklyPanelOpen ? 'expanded' : ''} size={18} aria-hidden="true" />
-          </button>
-          <button
-            className="action-button secondary-action weekly-feedback-button"
-            type="button"
-            disabled={busy !== null}
-            onClick={handleWeeklyFeedback}
-          >
-            {busy === 'weekly' ? <Loader2 className="spin" size={18} /> : <MessageCircle size={18} />}
-            週次コメント
-          </button>
-        </div>
-        {isWeeklyPanelOpen && (
-          <div className="collapsible-body">
-            {weeklyTrend ? (
-              <ul className="trend-list">
-                {weeklyTrend.days.map((day) => (
-                  <li key={day.date}>
-                    <div>
-                      <strong>{formatShortDate(day.date)}</strong>
-                      <span>{day.count > 0 ? `${day.count}件` : '食事0件'} / 体重 {formatWeightKg(day.weight_kg)}</span>
-                    </div>
-                    <div className="trend-values">
-                      <span className={isOverTarget(day.total.calories_kcal, targets.calories_kcal) ? 'over' : ''}>
-                        {Math.round(day.total.calories_kcal)}{targets.calories_kcal === null ? '' : `/${Math.round(targets.calories_kcal)}`} kcal
-                      </span>
-                      <small>P{day.total.protein_g} / F{day.total.fat_g} / C{day.total.carbs_g}</small>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="empty-text">GAS Web App 上で7日トレンドを読み込みます。</p>
-            )}
-            {weeklyReview && (
-              <p className="feedback-text">
-                前回 {formatShortDate(weeklyReview.generated_at)}: {weeklyReview.text}
-              </p>
-            )}
-          </div>
-        )}
-      </section>
-
       <form className="meal-form" onSubmit={handleSave}>
         {selectedMealId && (
           <div className="edit-banner">
@@ -1078,6 +866,218 @@ function App(): JSX.Element {
           </button>
         </div>
       </form>
+
+      <section className="panel recent-panel">
+        <div className="section-heading">
+          <div>
+            <span className="section-label">履歴</span>
+            <h2>最近の記録</h2>
+          </div>
+          <button
+            className="icon-button"
+            type="button"
+            aria-label="最近の記録を更新"
+            onClick={() => void refreshDashboard(true)}
+          >
+            {loadingRecent || loadingFavorites ? <Loader2 className="spin" size={18} /> : <RefreshCw size={18} />}
+          </button>
+        </div>
+        {recentMeals.length > 0 ? (
+          <ul className="recent-list">
+            {visibleRecentMeals.map((meal) => (
+              <li key={meal.id}>
+                <button className="recent-edit-button" type="button" onClick={() => loadMealForEdit(meal)}>
+                  <History size={18} />
+                  <span>
+                    <strong>{meal.description}</strong>
+                    <em>{formatMealTime(meal.timestamp)} / {meal.meal_type} / {Math.round(meal.calories_kcal)} kcal</em>
+                  </span>
+                </button>
+                <div className="meal-action-row">
+                  <button
+                    className="favorite-add-button"
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={() => void handleAddFavorite(meal)}
+                  >
+                    {busy === 'favorite' ? <Loader2 className="spin" size={16} /> : <Star size={16} />}
+                    お気に入り追加
+                  </button>
+                  <button
+                    className="quick-register-button"
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={() => void handleQuickRegister(meal)}
+                  >
+                    {busy === 'quick' ? <Loader2 className="spin" size={16} /> : <Zap size={16} />}
+                    登録
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="empty-text">GAS Web App 上で最近の記録を読み込みます。</p>
+        )}
+        {hiddenRecentMealsCount > 0 && (
+          <button
+            className="recent-toggle-button"
+            type="button"
+            aria-expanded={isRecentExpanded}
+            onClick={() => setIsRecentExpanded((expanded) => !expanded)}
+          >
+            {isRecentExpanded ? '閉じる' : `さらに表示（あと${hiddenRecentMealsCount}件）`}
+          </button>
+        )}
+      </section>
+
+      <section className="panel favorite-panel">
+        <div className="section-heading">
+          <div>
+            <span className="section-label">定番</span>
+            <h2>お気に入り</h2>
+          </div>
+        </div>
+        {favorites.length > 0 ? (
+          <ul className="recent-list">
+            {favorites.map((favorite) => (
+              <li key={favorite.id}>
+                <div className="favorite-info">
+                  <Star size={18} />
+                  <span>
+                    <strong>{favorite.description}</strong>
+                    <em>{Math.round(favorite.calories_kcal)} kcal / P{favorite.protein_g} / F{favorite.fat_g} / C{favorite.carbs_g}</em>
+                  </span>
+                </div>
+                <div className="meal-action-row">
+                  <button
+                    className="quick-register-button"
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={() => void handleQuickRegisterFavorite(favorite)}
+                  >
+                    {busy === 'quick' ? <Loader2 className="spin" size={16} /> : <Zap size={16} />}
+                    登録
+                  </button>
+                  <button
+                    className="favorite-remove-button"
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={() => void handleRemoveFavorite(favorite)}
+                  >
+                    {busy === 'removeFavorite' ? <Loader2 className="spin" size={16} /> : <Trash2 size={16} />}
+                    削除
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="empty-text">最近の記録からお気に入りに追加すると、ここからワンタップ登録できます。</p>
+        )}
+      </section>
+
+      <section className={`panel target-panel collapsible-panel ${isTargetPanelOpen ? 'open' : ''}`} aria-expanded={isTargetPanelOpen}>
+        <button
+          className="collapsible-heading"
+          type="button"
+          aria-expanded={isTargetPanelOpen}
+          onClick={toggleTargetPanel}
+        >
+          <span>
+            <span className="section-label">目標</span>
+            <strong>1日の基準</strong>
+          </span>
+          <ChevronDown className={isTargetPanelOpen ? 'expanded' : ''} size={18} aria-hidden="true" />
+        </button>
+        {isTargetPanelOpen && (
+          <div className="collapsible-body">
+            <div className="target-grid">
+              <label className="field">
+                <span>目標 kcal</span>
+                <input
+                  value={targetCaloriesInput}
+                  type="number"
+                  min="0"
+                  step="1"
+                  inputMode="numeric"
+                  onChange={(event) => setTargetCaloriesInput(event.target.value)}
+                />
+              </label>
+              <div className="ratio-grid">
+                <RatioField label="P%" value={pfcRatio.protein} onChange={(value) => setPfcRatio({ ...pfcRatio, protein: value })} />
+                <RatioField label="F%" value={pfcRatio.fat} onChange={(value) => setPfcRatio({ ...pfcRatio, fat: value })} />
+                <RatioField label="C%" value={pfcRatio.carbs} onChange={(value) => setPfcRatio({ ...pfcRatio, carbs: value })} />
+              </div>
+            </div>
+            <div className="target-preview">
+              <span>{Math.round(calculatedTargets.calories_kcal)} kcal</span>
+              <span>P {calculatedTargets.protein_g}g</span>
+              <span>F {calculatedTargets.fat_g}g</span>
+              <span>C {calculatedTargets.carbs_g}g</span>
+            </div>
+            <button className="action-button secondary-action" type="button" disabled={busy !== null} onClick={handleSaveTargets}>
+              {busy === 'targets' ? <Loader2 className="spin" size={18} /> : <Save size={18} />}
+              目標を保存
+            </button>
+          </div>
+        )}
+      </section>
+
+      <section className={`panel weekly-panel collapsible-panel ${isWeeklyPanelOpen ? 'open' : ''}`} aria-expanded={isWeeklyPanelOpen}>
+        <div className="weekly-heading-row">
+          <button
+            className="collapsible-heading"
+            type="button"
+            aria-expanded={isWeeklyPanelOpen}
+            onClick={toggleWeeklyPanel}
+          >
+            <span>
+              <span className="section-label">7日</span>
+              <strong>トレンド</strong>
+            </span>
+            <ChevronDown className={isWeeklyPanelOpen ? 'expanded' : ''} size={18} aria-hidden="true" />
+          </button>
+          <button
+            className="action-button secondary-action weekly-feedback-button"
+            type="button"
+            disabled={busy !== null}
+            onClick={handleWeeklyFeedback}
+          >
+            {busy === 'weekly' ? <Loader2 className="spin" size={18} /> : <MessageCircle size={18} />}
+            週次コメント
+          </button>
+        </div>
+        {isWeeklyPanelOpen && (
+          <div className="collapsible-body">
+            {weeklyTrend ? (
+              <ul className="trend-list">
+                {weeklyTrend.days.map((day) => (
+                  <li key={day.date}>
+                    <div>
+                      <strong>{formatShortDate(day.date)}</strong>
+                      <span>{day.count > 0 ? `${day.count}件` : '食事0件'} / 体重 {formatWeightKg(day.weight_kg)}</span>
+                    </div>
+                    <div className="trend-values">
+                      <span className={isOverTarget(day.total.calories_kcal, targets.calories_kcal) ? 'over' : ''}>
+                        {Math.round(day.total.calories_kcal)}{targets.calories_kcal === null ? '' : `/${Math.round(targets.calories_kcal)}`} kcal
+                      </span>
+                      <small>P{day.total.protein_g} / F{day.total.fat_g} / C{day.total.carbs_g}</small>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="empty-text">GAS Web App 上で7日トレンドを読み込みます。</p>
+            )}
+            {weeklyReview && (
+              <p className="feedback-text">
+                前回 {formatShortDate(weeklyReview.generated_at)}: {weeklyReview.text}
+              </p>
+            )}
+          </div>
+        )}
+      </section>
     </main>
   );
 }
