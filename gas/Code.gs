@@ -4,10 +4,9 @@ const TARGETS_SHEET_NAME = 'targets';
 const HEALTH_DATA_SHEET_NAME = 'health_data';
 const WEEKLY_REVIEW_SHEET_NAME = 'weekly_review';
 const GEMINI_MODEL = 'gemini-3.5-flash';
-const GEMINI_ENDPOINT =
-  'https://generativelanguage.googleapis.com/v1beta/models/' +
-  GEMINI_MODEL +
-  ':generateContent';
+const GEMINI_FALLBACK_MODEL = 'gemini-2.5-flash';
+const GEMINI_FALLBACK_NOTICE =
+  'Gemini 3.5 Flashの制限または混雑により、Gemini 2.5 Flashで出力しました。';
 
 const FOOD_LOG_HEADERS = [
   'id',
@@ -338,11 +337,13 @@ function summarizeWeeklyFeedback() {
     '週合計: ' + Math.round(weeklyTotal.calories_kcal) + 'kcal / P' + weeklyTotal.protein_g + 'g / F' + weeklyTotal.fat_g + 'g / C' + weeklyTotal.carbs_g + 'g\n' +
     '日平均: ' + Math.round(dailyAverage.calories_kcal) + 'kcal / P' + dailyAverage.protein_g + 'g / F' + dailyAverage.fat_g + 'g / C' + dailyAverage.carbs_g + 'g\n' +
     '目標差分:\n- ' + targetLines.join('\n- ');
+  const geminiResult = callGeminiText(prompt, 'medium');
   const review = {
     generated_at: new Date().toISOString(),
     window_start: trend.window_start,
     window_end: trend.window_end,
-    text: callGeminiText(prompt, 'medium'),
+    text: geminiResult.text,
+    fallback_notice: geminiResult.fallback_notice,
   };
   const sheet = getWeeklyReviewSheet();
 
@@ -391,11 +392,14 @@ function summarizeTodayFeedback() {
     '食事:\n- ' +
     mealLines.join('\n- ');
 
+  const geminiResult = callGeminiText(prompt, 'low');
+
   return {
     date: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd'),
     count: meals.length,
     total: total,
-    feedback: callGeminiText(prompt, 'low'),
+    feedback: geminiResult.text,
+    fallback_notice: geminiResult.fallback_notice,
   };
 }
 
@@ -434,34 +438,22 @@ function estimateCalories(inputText, imageBase64, imageMimeType) {
     });
   }
 
-  const response = UrlFetchApp.fetch(GEMINI_ENDPOINT + '?key=' + encodeURIComponent(apiKey), {
-    method: 'post',
-    contentType: 'application/json',
-    muteHttpExceptions: true,
-    payload: JSON.stringify({
-      contents: [
-        {
-          role: 'user',
-          parts: parts,
-        },
-      ],
-      generationConfig: {
-        response_mime_type: 'application/json',
-        thinkingConfig: {
-          thinkingLevel: 'low',
-        },
+  const geminiResponse = fetchGeminiWithFallback(apiKey, {
+    contents: [
+      {
+        role: 'user',
+        parts: parts,
       },
-    }),
+    ],
+    generationConfig: {
+      response_mime_type: 'application/json',
+      thinkingConfig: {
+        thinkingLevel: 'low',
+      },
+    },
   });
 
-  const statusCode = response.getResponseCode();
-  const body = response.getContentText();
-
-  if (statusCode < 200 || statusCode >= 300) {
-    throw new Error('Gemini API の呼び出しに失敗しました。status=' + statusCode);
-  }
-
-  const payload = JSON.parse(body);
+  const payload = JSON.parse(geminiResponse.body);
   const allParts = (
     payload.candidates &&
     payload.candidates[0] &&
@@ -475,7 +467,13 @@ function estimateCalories(inputText, imageBase64, imageMimeType) {
     throw new Error('Gemini API の応答が空です。');
   }
 
-  return normalizeNutritionResult(JSON.parse(extractJson(responseText)), text || '画像の食事');
+  const result = normalizeNutritionResult(JSON.parse(extractJson(responseText)), text || '画像の食事');
+
+  if (geminiResponse.usedFallback) {
+    result.fallback_notice = GEMINI_FALLBACK_NOTICE;
+  }
+
+  return result;
 }
 
 function callGeminiText(prompt, thinkingLevel) {
@@ -491,33 +489,21 @@ function callGeminiText(prompt, thinkingLevel) {
     throw new Error('Gemini に送る内容が空です。');
   }
 
-  const response = UrlFetchApp.fetch(GEMINI_ENDPOINT + '?key=' + encodeURIComponent(apiKey), {
-    method: 'post',
-    contentType: 'application/json',
-    muteHttpExceptions: true,
-    payload: JSON.stringify({
-      contents: [
-        {
-          role: 'user',
-          parts: [{ text: text }],
-        },
-      ],
-      generationConfig: {
-        thinkingConfig: {
-          thinkingLevel: thinkingLevel || 'low',
-        },
+  const geminiResponse = fetchGeminiWithFallback(apiKey, {
+    contents: [
+      {
+        role: 'user',
+        parts: [{ text: text }],
       },
-    }),
+    ],
+    generationConfig: {
+      thinkingConfig: {
+        thinkingLevel: thinkingLevel || 'low',
+      },
+    },
   });
 
-  const statusCode = response.getResponseCode();
-  const body = response.getContentText();
-
-  if (statusCode < 200 || statusCode >= 300) {
-    throw new Error('Gemini API の呼び出しに失敗しました。status=' + statusCode);
-  }
-
-  const payload = JSON.parse(body);
+  const payload = JSON.parse(geminiResponse.body);
   const allParts = (
     payload.candidates &&
     payload.candidates[0] &&
@@ -531,7 +517,69 @@ function callGeminiText(prompt, thinkingLevel) {
     throw new Error('Gemini API の応答が空です。');
   }
 
-  return String(responseText).trim();
+  return {
+    text: String(responseText).trim(),
+    fallback_notice: geminiResponse.usedFallback ? GEMINI_FALLBACK_NOTICE : '',
+  };
+}
+
+function fetchGeminiWithFallback(apiKey, payload) {
+  const primaryResponse = fetchGemini(apiKey, GEMINI_MODEL, payload);
+
+  if (isSuccessfulGeminiResponse(primaryResponse.statusCode)) {
+    return { body: primaryResponse.body, usedFallback: false };
+  }
+
+  if (shouldFallbackGemini(primaryResponse.statusCode)) {
+    const fallbackResponse = fetchGemini(
+      apiKey,
+      GEMINI_FALLBACK_MODEL,
+      withoutThinkingLevel(payload),
+    );
+
+    if (isSuccessfulGeminiResponse(fallbackResponse.statusCode)) {
+      return { body: fallbackResponse.body, usedFallback: true };
+    }
+
+    throw new Error('Gemini API の呼び出しに失敗しました。status=' + fallbackResponse.statusCode);
+  }
+
+  throw new Error('Gemini API の呼び出しに失敗しました。status=' + primaryResponse.statusCode);
+}
+
+function fetchGemini(apiKey, model, payload) {
+  const response = UrlFetchApp.fetch(
+    'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(apiKey),
+    {
+      method: 'post',
+      contentType: 'application/json',
+      muteHttpExceptions: true,
+      payload: JSON.stringify(payload),
+    },
+  );
+
+  return {
+    statusCode: response.getResponseCode(),
+    body: response.getContentText(),
+  };
+}
+
+function isSuccessfulGeminiResponse(statusCode) {
+  return statusCode >= 200 && statusCode < 300;
+}
+
+function shouldFallbackGemini(statusCode) {
+  return statusCode === 429 || statusCode === 503 || statusCode === 504;
+}
+
+function withoutThinkingLevel(payload) {
+  const fallbackPayload = JSON.parse(JSON.stringify(payload));
+
+  if (fallbackPayload.generationConfig) {
+    delete fallbackPayload.generationConfig.thinkingConfig;
+  }
+
+  return fallbackPayload;
 }
 
 function getFoodLogSheet() {

@@ -295,7 +295,11 @@ function App(): JSX.Element {
       const image = await readSelectedImage(inputMode, photoFile, photoNote);
       const result = await estimateCalories(estimationInput, image.base64, image.mimeType);
       applyNutrition(result, true);
-      setStatus({ message: '推定結果を反映しました。', type: 'success' });
+      setStatus(
+        result.fallback_notice
+          ? { message: `推定結果を反映しました。${result.fallback_notice}`, type: 'error' }
+          : { message: '推定結果を反映しました。', type: 'success' },
+      );
     } catch (error) {
       setStatus({ message: getErrorMessage(error), type: 'error' });
     } finally {
@@ -623,7 +627,11 @@ function App(): JSX.Element {
         count: feedback.count,
         total: feedback.total,
       });
-      setStatus({ message: 'コメントを取得しました。', type: 'success' });
+      setStatus(
+        feedback.fallback_notice
+          ? { message: `コメントを取得しました。${feedback.fallback_notice}`, type: 'error' }
+          : { message: 'コメントを取得しました。', type: 'success' },
+      );
     } catch (error) {
       setStatus({ message: getErrorMessage(error), type: 'error' });
     } finally {
@@ -654,7 +662,11 @@ function App(): JSX.Element {
       const review = await summarizeWeeklyFeedback();
       setWeeklyReview(review);
       await refreshDashboard(false);
-      setStatus({ message: '週次コメントを取得しました。', type: 'success' });
+      setStatus(
+        review.fallback_notice
+          ? { message: `週次コメントを取得しました。${review.fallback_notice}`, type: 'error' }
+          : { message: '週次コメントを取得しました。', type: 'success' },
+      );
     } catch (error) {
       setStatus({ message: getErrorMessage(error), type: 'error' });
     } finally {
