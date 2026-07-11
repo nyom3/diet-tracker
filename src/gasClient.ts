@@ -1,4 +1,6 @@
 import type {
+  AiProviderMode,
+  AiStatus,
   DailyFeedback,
   FavoriteMeal,
   FavoriteMealPayload,
@@ -26,7 +28,13 @@ declare global {
 type GoogleScriptRun = {
   withSuccessHandler: (handler: (value: unknown) => void) => GoogleScriptRun;
   withFailureHandler: (handler: (error: Error) => void) => GoogleScriptRun;
-  estimateCalories: (description: string, imageBase64: string, imageMimeType: string) => void;
+  estimateCalories: (
+    description: string,
+    imageBase64: string,
+    imageMimeType: string,
+    imageWidthPx: number,
+    imageHeightPx: number,
+  ) => void;
   processInput: (payload: SaveMealPayload) => void;
   deleteMeal: (id: string) => void;
   listRecentMeals: (limit: number) => void;
@@ -41,15 +49,20 @@ type GoogleScriptRun = {
   getLatestWeeklyReview: () => void;
   summarizeTodayFeedback: () => void;
   summarizeWeeklyFeedback: () => void;
+  getAiStatus: () => void;
+  setAiProviderMode: (mode: AiProviderMode) => void;
+  confirmOpenAiEligibility: (action: 'confirm' | 'pause') => void;
 };
 
 export function estimateCalories(
   description: string,
   imageBase64: string,
   imageMimeType: string,
+  imageWidthPx: number,
+  imageHeightPx: number,
 ): Promise<NutritionResult> {
   return callGas<NutritionResult>((runner) => {
-    runner.estimateCalories(description, imageBase64, imageMimeType);
+    runner.estimateCalories(description, imageBase64, imageMimeType, imageWidthPx, imageHeightPx);
   });
 }
 
@@ -137,6 +150,24 @@ export function summarizeTodayFeedback(): Promise<DailyFeedback> {
 export function summarizeWeeklyFeedback(): Promise<WeeklyReview> {
   return callGas<WeeklyReview>((runner) => {
     runner.summarizeWeeklyFeedback();
+  });
+}
+
+export function getAiStatus(): Promise<AiStatus> {
+  return callGas<AiStatus>((runner) => {
+    runner.getAiStatus();
+  });
+}
+
+export function setAiProviderMode(mode: AiProviderMode): Promise<AiStatus> {
+  return callGas<AiStatus>((runner) => {
+    runner.setAiProviderMode(mode);
+  });
+}
+
+export function confirmOpenAiEligibility(action: 'confirm' | 'pause'): Promise<AiStatus> {
+  return callGas<AiStatus>((runner) => {
+    runner.confirmOpenAiEligibility(action);
   });
 }
 

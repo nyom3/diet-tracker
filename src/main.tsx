@@ -20,8 +20,10 @@ import {
 } from 'lucide-react';
 import {
   addFavorite,
+  confirmOpenAiEligibility,
   deleteMeal,
   estimateCalories,
+  getAiStatus,
   getTargets,
   getTodaySummary,
   getWeeklyTrend,
@@ -30,11 +32,14 @@ import {
   processInput,
   removeFavorite,
   saveTargets,
+  setAiProviderMode,
   summarizeTodayFeedback,
   summarizeWeeklyFeedback,
   updateMeal,
 } from './gasClient';
 import type {
+  AiProviderMode,
+  AiStatus,
   DailyFeedback,
   EstimateMode,
   FavoriteMeal,
@@ -61,6 +66,7 @@ const recentMealsPreviewCount = 3;
 const draftStorageKey = 'diet-tracker-meal-draft-v1';
 const targetPanelStorageKey = 'panel_target_open';
 const weeklyPanelStorageKey = 'panel_weekly_open';
+const aiPanelStorageKey = 'panel_ai_open';
 const quickUndoWindowMs = 8000;
 const nutritionKeys: Array<{ key: NutritionKey; label: string; unit: string; step: string }> = [
   { key: 'calories_kcal', label: 'カロリー', unit: 'kcal', step: '1' },
@@ -96,6 +102,69 @@ type QuickUndo = {
 
 function formatWeightKg(weightKg: number | null | undefined): string {
   return typeof weightKg === 'number' && Number.isFinite(weightKg) ? `${weightKg.toFixed(1)}kg` : '-';
+}
+
+function summarizeAiStatusLine(aiStatus: AiStatus | null): string {
+  if (!aiStatus) {
+    return 'AI状況を取得中です。';
+  }
+
+  if (aiStatus.mode === 'gemini') {
+    return 'AI: Gemini・手動選択中';
+  }
+
+  if (!aiStatus.openAiAvailable) {
+    return `AI: Gemini使用中(${aiStatus.blockingReason || 'OpenAI利用不可'})`;
+  }
+
+  const used = aiStatus.usage.economyTokens + aiStatus.usage.reservedEconomyTokens;
+  const appLimit = aiStatus.limits.economy.appLimit;
+  const remainingPercent = appLimit > 0 ? Math.max(0, ((appLimit - used) / appLimit) * 100).toFixed(1) : '0.0';
+  return `AI: OpenAI・無料利用 安全 残り${remainingPercent}%`;
+}
+
+function aiModeLabel(mode: AiProviderMode): string {
+  if (mode === 'openai') return 'OpenAI';
+  if (mode === 'gemini') return 'Gemini';
+  return '自動';
+}
+
+function aiEligibilityLabel(status: AiStatus['eligibility']['status']): string {
+  if (status === 'confirmed') return '確認済み';
+  if (status === 'expired') return '要再確認(期限切れ)';
+  if (status === 'paused') return '一時停止中';
+  return '未確認';
+}
+
+function formatNextResetJst(dateUtc: string): string {
+  const base = Date.parse(`${dateUtc}T00:00:00Z`);
+
+  if (Number.isNaN(base)) {
+    return '-';
+  }
+
+  const next = new Date(base + 24 * 60 * 60 * 1000);
+  return new Intl.DateTimeFormat('ja-JP', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Asia/Tokyo',
+  }).format(next);
+}
+
+function formatEpochMs(epochMs: number): string {
+  if (!epochMs) {
+    return '未確認';
+  }
+
+  return new Intl.DateTimeFormat('ja-JP', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Asia/Tokyo',
+  }).format(new Date(epochMs));
 }
 
 type ErrorBoundaryState = {
@@ -167,6 +236,9 @@ function App(): JSX.Element {
   const [summaryStatus, setSummaryStatus] = React.useState<ResourceStatus>('loading');
   const [targetsStatus, setTargetsStatus] = React.useState<ResourceStatus>('loading');
   const [weeklyStatus, setWeeklyStatus] = React.useState<ResourceStatus>('loading');
+  const [aiStatus, setAiStatus] = React.useState<AiStatus | null>(null);
+  const [isAiPanelOpen, setIsAiPanelOpen] = React.useState(() => readBooleanStorage(aiPanelStorageKey, false));
+  const [aiModeSwitching, setAiModeSwitching] = React.useState(false);
   const [status, setStatus] = React.useState<{ message: string; type?: 'success' | 'error' }>({ message: '' });
   const [busy, setBusy] = React.useState<
     'estimate' | 'save' | 'quick' | 'favorite' | 'removeFavorite' | 'feedback' | 'targets' | 'weekly' | null
@@ -209,6 +281,10 @@ function App(): JSX.Element {
 
   React.useEffect(() => {
     void refreshDashboard(false);
+  }, []);
+
+  React.useEffect(() => {
+    void loadAiStatus();
   }, []);
 
   React.useEffect(() => {
@@ -274,6 +350,47 @@ function App(): JSX.Element {
     });
   }
 
+  function toggleAiPanel(): void {
+    setIsAiPanelOpen((current) => {
+      const next = !current;
+      writeBooleanStorage(aiPanelStorageKey, next);
+      return next;
+    });
+  }
+
+  async function loadAiStatus(): Promise<void> {
+    try {
+      const nextStatus = await getAiStatus();
+      setAiStatus(nextStatus);
+    } catch (error) {
+      console.warn('AI利用状況の読み込みに失敗しました:', error);
+    }
+  }
+
+  async function handleAiModeChange(mode: AiProviderMode): Promise<void> {
+    try {
+      setAiModeSwitching(true);
+      const nextStatus = await setAiProviderMode(mode);
+      setAiStatus(nextStatus);
+    } catch (error) {
+      setStatus({ message: getErrorMessage(error), type: 'error' });
+    } finally {
+      setAiModeSwitching(false);
+    }
+  }
+
+  async function handleEligibilityAction(action: 'confirm' | 'pause'): Promise<void> {
+    try {
+      setAiModeSwitching(true);
+      const nextStatus = await confirmOpenAiEligibility(action);
+      setAiStatus(nextStatus);
+    } catch (error) {
+      setStatus({ message: getErrorMessage(error), type: 'error' });
+    } finally {
+      setAiModeSwitching(false);
+    }
+  }
+
   function applyNutrition(result: NutritionResult, enableStepper: boolean): void {
     const nextTotal = normalizeTotal(result.total || result);
     const nextItems = Array.isArray(result.items) ? result.items.map(normalizeItem) : [];
@@ -293,7 +410,7 @@ function App(): JSX.Element {
       setBusy('estimate');
       setStatus({ message: '推定中です。' });
       const image = await readSelectedImage(inputMode, photoFile, photoNote);
-      const result = await estimateCalories(estimationInput, image.base64, image.mimeType);
+      const result = await estimateCalories(estimationInput, image.base64, image.mimeType, image.widthPx, image.heightPx);
       applyNutrition(result, true);
       setStatus(
         result.fallback_notice
@@ -303,6 +420,7 @@ function App(): JSX.Element {
     } catch (error) {
       setStatus({ message: getErrorMessage(error), type: 'error' });
     } finally {
+      await loadAiStatus();
       setBusy(null);
     }
   }
@@ -635,6 +753,7 @@ function App(): JSX.Element {
     } catch (error) {
       setStatus({ message: getErrorMessage(error), type: 'error' });
     } finally {
+      await loadAiStatus();
       setBusy(null);
     }
   }
@@ -670,12 +789,109 @@ function App(): JSX.Element {
     } catch (error) {
       setStatus({ message: getErrorMessage(error), type: 'error' });
     } finally {
+      await loadAiStatus();
       setBusy(null);
     }
   }
 
   return (
     <main className="app-shell">
+      <section className={`panel ai-status-panel collapsible-panel ${isAiPanelOpen ? 'open' : ''}`} aria-expanded={isAiPanelOpen}>
+        <button
+          className="collapsible-heading"
+          type="button"
+          aria-expanded={isAiPanelOpen}
+          onClick={toggleAiPanel}
+        >
+          <span>
+            <span className="section-label">AI</span>
+            <strong>{summarizeAiStatusLine(aiStatus)}</strong>
+          </span>
+          <ChevronDown className={isAiPanelOpen ? 'expanded' : ''} size={18} aria-hidden="true" />
+        </button>
+        {isAiPanelOpen && (
+          <div className="collapsible-body">
+            <SegmentedGroup label="AIプロバイダー">
+              {(['auto', 'openai', 'gemini'] as AiProviderMode[]).map((mode) => (
+                <SegmentedButton
+                  key={mode}
+                  active={(aiStatus?.mode ?? 'auto') === mode}
+                  onClick={() => {
+                    if (busy !== null || aiModeSwitching) return;
+                    void handleAiModeChange(mode);
+                  }}
+                >
+                  {aiModeLabel(mode)}
+                </SegmentedButton>
+              ))}
+            </SegmentedGroup>
+            {aiStatus ? (
+              <>
+                <ul className="ai-status-detail">
+                  <li>
+                    <span>現在の状態</span>
+                    <strong>{aiStatus.openAiAvailable ? 'OpenAI利用可' : `Gemini使用中(${aiStatus.blockingReason || '手動選択'})`}</strong>
+                  </li>
+                  <li>
+                    <span>本日の使用token</span>
+                    <strong>{aiStatus.usage.economyTokens.toLocaleString()} + 予約中{aiStatus.usage.reservedEconomyTokens.toLocaleString()}</strong>
+                  </li>
+                  <li>
+                    <span>アプリ安全上限までの残量</span>
+                    <strong>{Math.max(0, aiStatus.limits.economy.appLimit - aiStatus.usage.economyTokens - aiStatus.usage.reservedEconomyTokens).toLocaleString()} token</strong>
+                  </li>
+                  <li>
+                    <span>公式無料枠までの参考残量</span>
+                    <strong>{Math.max(0, aiStatus.limits.economy.officialLimit - aiStatus.usage.economyTokens - aiStatus.usage.reservedEconomyTokens).toLocaleString()} token</strong>
+                  </li>
+                  <li>
+                    <span>次回リセット</span>
+                    <strong>{formatNextResetJst(aiStatus.usage.dateUtc)}</strong>
+                  </li>
+                  <li>
+                    <span>公開ルール最終確認</span>
+                    <strong>{formatEpochMs(aiStatus.rule.lastSuccessAt)}</strong>
+                  </li>
+                  <li>
+                    <span>アカウント資格</span>
+                    <strong>{aiEligibilityLabel(aiStatus.eligibility.status)} ({formatEpochMs(aiStatus.eligibility.confirmedAt)})</strong>
+                  </li>
+                  {aiStatus.lastFallbackReason && (
+                    <li>
+                      <span>直近のフォールバック理由</span>
+                      <strong>{aiStatus.lastFallbackReason}</strong>
+                    </li>
+                  )}
+                </ul>
+                <div className="ai-eligibility-box">
+                  <p>OpenAI Data Controlsに「You're enrolled for complimentary daily tokens」と表示されていますか？</p>
+                  <div className="ai-eligibility-actions">
+                    <button
+                      className="action-button secondary-action"
+                      type="button"
+                      disabled={busy !== null || aiModeSwitching}
+                      onClick={() => void handleEligibilityAction('confirm')}
+                    >
+                      確認した
+                    </button>
+                    <button
+                      className="action-button secondary-action"
+                      type="button"
+                      disabled={busy !== null || aiModeSwitching}
+                      onClick={() => void handleEligibilityAction('pause')}
+                    >
+                      OpenAIを一時停止
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <p className="empty-text">AI状況を取得できませんでした。手動入力・保存は引き続き利用できます。</p>
+            )}
+          </div>
+        )}
+      </section>
+
       <header className="app-header">
         <div>
           <p className="eyebrow">Meal Logger</p>
@@ -1460,33 +1676,89 @@ function createManualPrompt(inputMode: InputMode, description: string): string {
   return `次の食事の品ごとのカロリーとPFCを推定してください。JSONのみ回答してください。\n\n食事: ${description}\n\n${schema}`;
 }
 
-function readSelectedImage(inputMode: InputMode, file: File | null, note: string): Promise<ImagePayload> {
+const emptyImagePayload: ImagePayload = { base64: '', mimeType: '', widthPx: 0, heightPx: 0 };
+const maxImageDimensionPx = 1536;
+const imageJpegQuality = 0.82;
+const maxImageBytes = 1.5 * 1024 * 1024;
+
+async function readSelectedImage(inputMode: InputMode, file: File | null, note: string): Promise<ImagePayload> {
   if (inputMode !== 'photo') {
-    return Promise.resolve({ base64: '', mimeType: '' });
+    return emptyImagePayload;
   }
 
   if (!file) {
     if (!note.trim()) {
-      return Promise.reject(new Error('写真またはメモを入力してください。'));
+      throw new Error('写真またはメモを入力してください。');
     }
 
-    return Promise.resolve({ base64: '', mimeType: '' });
+    return emptyImagePayload;
   }
 
   if (!/^image\/(jpeg|png)$/.test(file.type)) {
-    return Promise.reject(new Error('JPEGまたはPNGを選択してください。'));
+    throw new Error('JPEGまたはPNGを選択してください。');
   }
 
+  return resizeImageForEstimate(file);
+}
+
+// token予約が実消費を上回るよう、送信前に長辺を上限まで縮小してから実寸でtokenを見積もる
+// (詳細は gas/OpenAiProvider.gs の tryOpenAiVisionEstimate を参照)。
+async function resizeImageForEstimate(file: File): Promise<ImagePayload> {
+  const bitmap = await createImageBitmap(file);
+
+  try {
+    const scale = Math.min(1, maxImageDimensionPx / Math.max(bitmap.width, bitmap.height));
+    const widthPx = Math.max(1, Math.round(bitmap.width * scale));
+    const heightPx = Math.max(1, Math.round(bitmap.height * scale));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = widthPx;
+    canvas.height = heightPx;
+    const context = canvas.getContext('2d');
+
+    if (!context) {
+      throw new Error('画像を処理できませんでした。');
+    }
+
+    context.drawImage(bitmap, 0, 0, widthPx, heightPx);
+
+    let quality = imageJpegQuality;
+    let blob = await canvasToJpegBlob(canvas, quality);
+
+    while (blob.size > maxImageBytes && quality > 0.4) {
+      quality -= 0.12;
+      blob = await canvasToJpegBlob(canvas, quality);
+    }
+
+    const base64 = await blobToBase64(blob);
+    return { base64, mimeType: 'image/jpeg', widthPx, heightPx };
+  } finally {
+    bitmap.close();
+  }
+}
+
+function canvasToJpegBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (blob) {
+          resolve(blob);
+        } else {
+          reject(new Error('画像の変換に失敗しました。'));
+        }
+      },
+      'image/jpeg',
+      quality,
+    );
+  });
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => {
-      resolve({
-        base64: String(reader.result).replace(/^data:[^;]+;base64,/, ''),
-        mimeType: file.type,
-      });
-    };
+    reader.onload = () => resolve(String(reader.result).replace(/^data:[^;]+;base64,/, ''));
     reader.onerror = () => reject(new Error('画像を読み取れませんでした。'));
-    reader.readAsDataURL(file);
+    reader.readAsDataURL(blob);
   });
 }
 

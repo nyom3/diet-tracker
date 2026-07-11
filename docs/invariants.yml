@@ -5,9 +5,9 @@
 - id: SECRET_IN_SCRIPT_PROPERTIES
   statement: API キー等の秘密は PropertiesService 経由でのみ取得し、コード・ログ・フロントに平文を出さない
   severity: critical
-  triggers: [Gemini呼び出し変更, 認証情報の取得, スクリプトプロパティ参照変更, ログ出力追加, 新規外部API追加]
+  triggers: [Gemini呼び出し変更, OpenAI呼び出し変更, 認証情報の取得, スクリプトプロパティ参照変更, ログ出力追加, 新規外部API追加]
   rationale: 秘密のハードコードやログ流出は API キー漏洩とスプレッドシート乗っ取りに直結する
-  check: GEMINI_API_KEY / SPREADSHEET_ID 等が PropertiesService.getScriptProperties().getProperty 経由でのみ取得され、コードリテラル・Logger/console 出力・google.script.run の戻り値に平文の秘密が混入していない
+  check: GEMINI_API_KEY / OPENAI_API_KEY / SPREADSHEET_ID 等が PropertiesService.getScriptProperties().getProperty 経由でのみ取得され、コードリテラル・Logger/console 出力・google.script.run の戻り値(getAiStatus 含む)に平文の秘密が混入していない
   ref: AGENTS.md
 
 - id: DATA_SHEETS_ONLY
@@ -19,19 +19,35 @@
   ref: AGENTS.md
 
 - id: GEMINI_USER_INITIATED_ONLY
-  statement: Gemini 呼び出しはユーザーアクション起点のみとし、背景・定期実行から呼ばない
+  statement: Gemini/OpenAI の呼び出し、および OpenAI 公開ルールページの確認は、いずれもユーザーアクション起点のみとし、背景・定期実行から呼ばない
   severity: critical
-  triggers: [Gemini呼び出し追加, トリガー設定追加, 時間主導トリガー, onEdit/onOpen追加, FB/まとめ評価機能追加]
-  rationale: 背景の自動呼び出しはコスト・プライバシー・意図しない API 消費の温床になる
-  check: Gemini を呼ぶ関数(estimateCalories や #3 の summarize 系)へ到達する起動経路が google.script.run によるユーザー操作のみで、ScriptApp.newTrigger・時間主導・onEdit・onOpen 等の自動起点から Gemini 呼び出しに到達しない
+  triggers: [Gemini呼び出し追加, OpenAI呼び出し追加, 公開ルール監視変更, トリガー設定追加, 時間主導トリガー, onEdit/onOpen追加, FB/まとめ評価機能追加]
+  rationale: 背景の自動呼び出しはコスト・プライバシー・意図しない API 消費の温床になる。特に OpenAI は課金の可能性があるため、時間主導トリガーからの到達は絶対に避ける
+  check: Gemini/OpenAI を呼ぶ関数(estimateCalories・runAiText・#3 の summarize 系)、および refreshOpenAiRuleStateIfNeeded(getAiStatus 経由)へ到達する起動経路が google.script.run によるユーザー操作のみで、ScriptApp.newTrigger・時間主導・onEdit・onOpen 等の自動起点から到達しない
   ref: AGENTS.md
 
 - id: GEMINI_API_BOUNDARY
-  statement: Gemini 接続は GAS サーバ側に集約し、フロントは API キーを持たず Gemini を直接呼ばない。入力検証をサーバ境界で維持する
+  statement: Gemini/OpenAI 接続は GAS サーバ側に集約し、フロントは API キーを持たずいずれのプロバイダーも直接呼ばない。入力検証をサーバ境界で維持する
   severity: critical
-  triggers: [AI呼び出し追加, フロント変更, gasClient変更, 入力検証変更, 新AI機能追加, プロンプト変更]
+  triggers: [AI呼び出し追加, フロント変更, gasClient変更, 入力検証変更, 新AI機能追加, プロンプト変更, プロバイダー追加]
   rationale: AI 接続と検証をサーバ境界に集約することで秘密と入力制約を守る
-  check: src/ 配下が generativelanguage エンドポイントや GEMINI_API_KEY を参照せず、Gemini への UrlFetchApp.fetch が Code.gs のサーバ関数内のみに存在し、フロントの GAS 呼び出しが gasClient.ts に集約され、estimateCalories の空入力拒否等の検証が削除されていない
+  check: src/ 配下が generativelanguage / api.openai.com エンドポイントや GEMINI_API_KEY / OPENAI_API_KEY を参照せず、Gemini/OpenAI への UrlFetchApp.fetch が gas/ 配下のサーバ関数内(Code.gs / OpenAiProvider.gs)のみに存在し、フロントの GAS 呼び出しが gasClient.ts に集約され、estimateCalories の空入力拒否等の検証が削除されていない
+  ref: AGENTS.md
+
+- id: OPENAI_BUDGET_GATE_NOT_BYPASSABLE
+  statement: OpenAI 呼び出しは、資格確認・公開ルール鮮度・token 予約+日次安全上限チェックの全てを通過した場合のみ許可し、モード(自動/OpenAI/Gemini)の選択によってこのガードを迂回できない
+  severity: critical
+  triggers: [OpenAiBudget.gs変更, OpenAiProvider.gs変更, AI_PROVIDER_MODE追加, 安全上限変更, 資格確認フロー変更, モデル追加]
+  rationale: 無料枠を超えるOpenAI呼び出しは実際の課金に直結する。issue #44 の受け入れ条件は「OpenAIモードでも安全ガードを無効化できない」ことを明示している
+  check: attemptOpenAiChat が reserveOpenAiBudget(openAiEvaluateCallGate 経由)の許可なしに fetchOpenAiChat を呼ばず、mode==='openai' が eligibility/rule/cap のいずれのチェックもスキップしていない。OPENAI_APP_SAFETY_LIMITS は OPENAI_OFFICIAL_LIMITS の80%を超えない
+  ref: AGENTS.md
+
+- id: OPENAI_USAGE_LOCK_SAFE
+  statement: OpenAI の token 予約・実績反映は LockService の排他区間内で行い、失敗時は予約分を使用実績側へ倒す(安全側)
+  severity: critical
+  triggers: [reserveOpenAiBudget変更, commitOpenAiUsage変更, LockService呼び出し変更, 同時実行対応変更]
+  rationale: 排他なしの予約は同時実行時に安全上限を超えて課金される。失敗時に予約を単純解放すると、課金有無不明のまま安全上限の判定が実態より緩くなる
+  check: reserveOpenAiBudget/commitOpenAiUsage が LockService.getScriptLock().tryLock の成功時のみ Script Properties を更新し finally で releaseLock しており、openAiCommitFailure が予約分をそのまま使用実績へ積む(解放するだけで終わらない)実装のままである
   ref: AGENTS.md
 
 - id: SERVER_SIDE_WRITE_VALIDATION
