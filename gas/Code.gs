@@ -337,13 +337,13 @@ function summarizeWeeklyFeedback() {
     '週合計: ' + Math.round(weeklyTotal.calories_kcal) + 'kcal / P' + weeklyTotal.protein_g + 'g / F' + weeklyTotal.fat_g + 'g / C' + weeklyTotal.carbs_g + 'g\n' +
     '日平均: ' + Math.round(dailyAverage.calories_kcal) + 'kcal / P' + dailyAverage.protein_g + 'g / F' + dailyAverage.fat_g + 'g / C' + dailyAverage.carbs_g + 'g\n' +
     '目標差分:\n- ' + targetLines.join('\n- ');
-  const geminiResult = callGeminiText(prompt, 'medium');
+  const aiResult = runAiText(prompt, 'medium');
   const review = {
     generated_at: new Date().toISOString(),
     window_start: trend.window_start,
     window_end: trend.window_end,
-    text: geminiResult.text,
-    fallback_notice: geminiResult.fallback_notice,
+    text: aiResult.text,
+    fallback_notice: aiResult.fallback_notice,
   };
   const sheet = getWeeklyReviewSheet();
 
@@ -392,24 +392,18 @@ function summarizeTodayFeedback() {
     '食事:\n- ' +
     mealLines.join('\n- ');
 
-  const geminiResult = callGeminiText(prompt, 'low');
+  const aiResult = runAiText(prompt, 'low');
 
   return {
     date: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd'),
     count: meals.length,
     total: total,
-    feedback: geminiResult.text,
-    fallback_notice: geminiResult.fallback_notice,
+    feedback: aiResult.text,
+    fallback_notice: aiResult.fallback_notice,
   };
 }
 
 function estimateCalories(inputText, imageBase64, imageMimeType) {
-  const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
-
-  if (!apiKey) {
-    throw new Error('GEMINI_API_KEY が設定されていません。');
-  }
-
   const text = String(inputText || '').trim();
   const image = String(imageBase64 || '').trim();
   const mimeType = String(imageMimeType || 'image/jpeg').trim();
@@ -427,13 +421,26 @@ function estimateCalories(inputText, imageBase64, imageMimeType) {
     '"total":{"calories_kcal":数値,"protein_g":数値,"fat_g":数値,"carbs_g":数値}}\n\n' +
     (text ? '食事: ' + text : '画像の食事を推定してください。');
 
+  const strippedImage = image ? stripDataUrlPrefix(image) : '';
+  const openAiAttempt = tryOpenAiVisionEstimate(prompt, strippedImage, mimeType);
+
+  if (openAiAttempt.ok) {
+    return normalizeNutritionResult(JSON.parse(extractJson(openAiAttempt.text)), text || '画像の食事');
+  }
+
+  const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
+
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY が設定されていません。');
+  }
+
   const parts = [{ text: prompt }];
 
   if (image) {
     parts.push({
       inline_data: {
         mime_type: mimeType,
-        data: stripDataUrlPrefix(image),
+        data: strippedImage,
       },
     });
   }
@@ -469,9 +476,10 @@ function estimateCalories(inputText, imageBase64, imageMimeType) {
 
   const result = normalizeNutritionResult(JSON.parse(extractJson(responseText)), text || '画像の食事');
 
-  if (geminiResponse.usedFallback) {
-    result.fallback_notice = GEMINI_FALLBACK_NOTICE;
-  }
+  result.fallback_notice = buildFallbackNotice(
+    openAiAttempt.reason,
+    geminiResponse.usedFallback ? GEMINI_FALLBACK_NOTICE : '',
+  );
 
   return result;
 }
