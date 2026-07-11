@@ -22,6 +22,10 @@ var OPENAI_RULE_STALE_LIMIT_MS = 7 * 24 * 60 * 60 * 1000;
 var OPENAI_ELIGIBILITY_RECHECK_MS = 30 * 24 * 60 * 60 * 1000;
 var OPENAI_RESERVATION_SAFETY_MARGIN_TOKENS = 500;
 
+// 公開ページに引き続き存在しているべき文言・モデル名・枠の数値(検証できなければfail-closed)。
+var OPENAI_RULE_REQUIRED_TERMS = ['complimentary', 'daily token'];
+var OPENAI_RULE_REQUIRED_MODEL_TERMS = ['luna'];
+
 function openAiUtcDateString(epochMs) {
   var d = new Date(epochMs);
   var y = d.getUTCFullYear();
@@ -122,16 +126,85 @@ function openAiEstimateImageTokens(widthPx, heightPx) {
   return Math.ceil(patches * conservativeTokensPerPatch);
 }
 
-// プロンプト文字数・画像・出力上限・reasoning予算・固定マージンから今回の最大消費tokenを見積もる。
+// UTF-8バイト長を返す。byte-level BPE(OpenAIのトークナイザ)ではtoken数はbyte数を超えない
+// (各tokenは最低1byteを消費する)ため、これはtoken数の数学的に確実な上限として使える。
+// 文字数ベースの見積り(例: 文字数/2)は日本語等マルチバイト入力で過小評価しうるため使わない。
+function utf8ByteLength(text) {
+  var str = String(text || '');
+  var bytes = 0;
+  for (var i = 0; i < str.length; i++) {
+    var code = str.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff && i + 1 < str.length) {
+      var next = str.charCodeAt(i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        bytes += 4;
+        i++;
+        continue;
+      }
+    }
+    if (code <= 0x7f) {
+      bytes += 1;
+    } else if (code <= 0x7ff) {
+      bytes += 2;
+    } else {
+      bytes += 3;
+    }
+  }
+  return bytes;
+}
+
+// プロンプト・画像・出力上限・reasoning予算・固定マージンから今回の最大消費tokenを見積もる。
 function openAiCalculateReservation(params) {
   var p = params || {};
-  var promptTokens = Math.ceil((Number(p.promptCharLength) || 0) / 2); // 日本語想定、1token≈2文字の保守見積り
+  var promptTokens = utf8ByteLength(p.promptText);
   var imageTokens = p.imageWidthPx && p.imageHeightPx
     ? openAiEstimateImageTokens(p.imageWidthPx, p.imageHeightPx)
     : 0;
   var maxOutputTokens = Number(p.maxOutputTokens) || 0;
   var reasoningTokens = Number(p.reasoningTokenBudget) || 0;
   return promptTokens + imageTokens + maxOutputTokens + reasoningTokens + OPENAI_RESERVATION_SAFETY_MARGIN_TOKENS;
+}
+
+function openAiStripHtmlTags(html) {
+  return String(html || '').replace(/<[^>]*>/g, ' ');
+}
+
+function openAiExtractNumbers(text) {
+  var matches = String(text || '').match(/\d[\d,]*\d|\d/g) || [];
+  return matches
+    .map(function (raw) { return parseInt(raw.replace(/,/g, ''), 10); })
+    .filter(function (value) { return Number.isFinite(value); });
+}
+
+// 公開ページのプレーンテキストが、無料枠の説明・対象モデル・Tier1-2の枠の数値を
+// 引き続き含んでいるかを検証する。いずれか一つでも確認できなければ false(fail-closed)を返す。
+// 枠が公式に拡大されていても、ここでは「最低限この数値以上か」しか見ないため
+// アプリの安全上限(OPENAI_APP_SAFETY_LIMITS)を自動で引き上げることはない。
+//
+// premium枠の数値は経済枠より小さいため「minPremiumLimit以上の数値が1つでもあればOK」だと、
+// economy枠の大きな数値(例: 2,500,000 は 250,000 以上でもある)だけでpremium枠のチェックを
+// すり抜けてしまう。そのため「minPremiumLimit以上の数値が2つ(economy用・premium用)ある」ことを
+// 求める、やや保守的なヒューリスティックにしている。正確な構造化データではなく自由文からの
+// 検証である以上、完全ではない前提で fail-closed 側に倒す設計とする。
+function openAiPageIndicatesRuleOk(html, requiredTerms, requiredModelTerms, minEconomyLimit, minPremiumLimit) {
+  var plainText = openAiStripHtmlTags(html).toLowerCase();
+
+  var hasRequiredTerms = (requiredTerms || []).every(function (term) {
+    return plainText.indexOf(String(term).toLowerCase()) >= 0;
+  });
+  var hasModelTerm = (requiredModelTerms || []).some(function (term) {
+    return plainText.indexOf(String(term).toLowerCase()) >= 0;
+  });
+
+  if (!hasRequiredTerms || !hasModelTerm) {
+    return false;
+  }
+
+  var numbers = openAiExtractNumbers(plainText);
+  var hasEconomyLimit = numbers.some(function (n) { return n >= minEconomyLimit; });
+  var premiumOrLargerCount = numbers.filter(function (n) { return n >= minPremiumLimit; }).length;
+
+  return hasEconomyLimit && premiumOrLargerCount >= 2;
 }
 
 // アカウント資格(complimentary daily tokens対象)の状態を判定する。
@@ -210,6 +283,9 @@ if (typeof module !== 'undefined' && typeof module.exports !== 'undefined') {
     OPENAI_PREMIUM_GROUP: OPENAI_PREMIUM_GROUP,
     OPENAI_OFFICIAL_LIMITS: OPENAI_OFFICIAL_LIMITS,
     OPENAI_APP_SAFETY_LIMITS: OPENAI_APP_SAFETY_LIMITS,
+    OPENAI_RESERVATION_SAFETY_MARGIN_TOKENS: OPENAI_RESERVATION_SAFETY_MARGIN_TOKENS,
+    OPENAI_RULE_REQUIRED_TERMS: OPENAI_RULE_REQUIRED_TERMS,
+    OPENAI_RULE_REQUIRED_MODEL_TERMS: OPENAI_RULE_REQUIRED_MODEL_TERMS,
     openAiUtcDateString: openAiUtcDateString,
     openAiEmptyDailyUsage: openAiEmptyDailyUsage,
     openAiRolloverDailyUsage: openAiRolloverDailyUsage,
@@ -218,7 +294,10 @@ if (typeof module !== 'undefined' && typeof module.exports !== 'undefined') {
     openAiCommitSuccess: openAiCommitSuccess,
     openAiCommitFailure: openAiCommitFailure,
     openAiEstimateImageTokens: openAiEstimateImageTokens,
+    utf8ByteLength: utf8ByteLength,
     openAiCalculateReservation: openAiCalculateReservation,
+    openAiExtractNumbers: openAiExtractNumbers,
+    openAiPageIndicatesRuleOk: openAiPageIndicatesRuleOk,
     openAiEvaluateEligibility: openAiEvaluateEligibility,
     openAiEvaluateRuleFreshness: openAiEvaluateRuleFreshness,
     openAiEvaluateCallGate: openAiEvaluateCallGate,

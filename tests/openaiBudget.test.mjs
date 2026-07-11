@@ -87,16 +87,114 @@ test('openAiEstimateImageTokens: 1024x1024で保守的なtoken数を返す', () 
   assert.equal(tokens, 1332);
 });
 
-test('openAiCalculateReservation: プロンプト+画像+出力+マージンを合算する', () => {
+test('utf8ByteLength: ASCII/日本語/サロゲートペア(絵文字)を正しく数える', () => {
+  assert.equal(budget.utf8ByteLength('abc'), 3);
+  assert.equal(budget.utf8ByteLength('あいう'), 9); // 3文字 × 3byte
+  assert.equal(budget.utf8ByteLength('😀'), 4); // サロゲートペア1文字 = 4byte
+  assert.equal(budget.utf8ByteLength(''), 0);
+});
+
+test('openAiCalculateReservation: プロンプトはUTF-8バイト長で予約する(文字数/2は使わない)', () => {
+  const promptText = 'あ'.repeat(50); // 50文字 × 3byte = 150byte
   const tokens = budget.openAiCalculateReservation({
-    promptCharLength: 200,
+    promptText,
     imageWidthPx: 1024,
     imageHeightPx: 1024,
     maxOutputTokens: 800,
     reasoningTokenBudget: 300,
   });
-  // ceil(200/2)=100, image=1332, output=800, reasoning=300, margin=500
-  assert.equal(tokens, 100 + 1332 + 800 + 300 + 500);
+  // prompt=150(byte長), image=1332, output=800, reasoning=300, margin=500
+  assert.equal(tokens, 150 + 1332 + 800 + 300 + 500);
+});
+
+test('openAiCalculateReservation: 日本語プロンプトは文字数/2による過小評価をしない', () => {
+  const promptText = 'あ'.repeat(50);
+  const naiveCharBasedEstimate = Math.ceil(promptText.length / 2); // 旧実装の見積り(25)
+  const tokens = budget.openAiCalculateReservation({ promptText, maxOutputTokens: 0 });
+  const promptReservation = tokens - budget.OPENAI_RESERVATION_SAFETY_MARGIN_TOKENS;
+  assert.ok(
+    promptReservation > naiveCharBasedEstimate,
+    `UTF-8バイト長(${promptReservation})は文字数/2(${naiveCharBasedEstimate})より小さくなってはいけない`,
+  );
+});
+
+const GOOD_RULE_PAGE_HTML =
+  '<html><body><p>Organizations may be <b>complimentary</b> for free <i>daily token</i> usage. ' +
+  'Luna and Terra mini/nano models qualify for up to 2,500,000 tokens per day, while Sol and other ' +
+  'larger models qualify for up to 250,000 tokens per day.</p></body></html>';
+
+test('openAiPageIndicatesRuleOk: 用語・対象モデル・枠の数値が全て揃っていればtrue', () => {
+  const ok = budget.openAiPageIndicatesRuleOk(
+    GOOD_RULE_PAGE_HTML,
+    budget.OPENAI_RULE_REQUIRED_TERMS,
+    budget.OPENAI_RULE_REQUIRED_MODEL_TERMS,
+    budget.OPENAI_OFFICIAL_LIMITS.economy,
+    budget.OPENAI_OFFICIAL_LIMITS.premium,
+  );
+  assert.equal(ok, true);
+});
+
+test('openAiPageIndicatesRuleOk: 対象モデル(Luna)への言及が消えたらfalse', () => {
+  const html = GOOD_RULE_PAGE_HTML.replace(/Luna and Terra/i, 'Terra only');
+  const ok = budget.openAiPageIndicatesRuleOk(
+    html,
+    budget.OPENAI_RULE_REQUIRED_TERMS,
+    budget.OPENAI_RULE_REQUIRED_MODEL_TERMS,
+    budget.OPENAI_OFFICIAL_LIMITS.economy,
+    budget.OPENAI_OFFICIAL_LIMITS.premium,
+  );
+  assert.equal(ok, false);
+});
+
+test('openAiPageIndicatesRuleOk: economy枠の数値が縮小されたらfalse', () => {
+  const html = GOOD_RULE_PAGE_HTML.replace('2,500,000', '1,000,000');
+  const ok = budget.openAiPageIndicatesRuleOk(
+    html,
+    budget.OPENAI_RULE_REQUIRED_TERMS,
+    budget.OPENAI_RULE_REQUIRED_MODEL_TERMS,
+    budget.OPENAI_OFFICIAL_LIMITS.economy,
+    budget.OPENAI_OFFICIAL_LIMITS.premium,
+  );
+  assert.equal(ok, false);
+});
+
+test('openAiPageIndicatesRuleOk: premium枠の数値が縮小されたらfalse', () => {
+  const html = GOOD_RULE_PAGE_HTML.replace('250,000', '100,000');
+  const ok = budget.openAiPageIndicatesRuleOk(
+    html,
+    budget.OPENAI_RULE_REQUIRED_TERMS,
+    budget.OPENAI_RULE_REQUIRED_MODEL_TERMS,
+    budget.OPENAI_OFFICIAL_LIMITS.economy,
+    budget.OPENAI_OFFICIAL_LIMITS.premium,
+  );
+  assert.equal(ok, false);
+});
+
+test('openAiPageIndicatesRuleOk: 無料枠自体の説明が消えたらfalse', () => {
+  const html = '<html><body><p>Nothing relevant here.</p></body></html>';
+  const ok = budget.openAiPageIndicatesRuleOk(
+    html,
+    budget.OPENAI_RULE_REQUIRED_TERMS,
+    budget.OPENAI_RULE_REQUIRED_MODEL_TERMS,
+    budget.OPENAI_OFFICIAL_LIMITS.economy,
+    budget.OPENAI_OFFICIAL_LIMITS.premium,
+  );
+  assert.equal(ok, false);
+});
+
+test('openAiPageIndicatesRuleOk: 枠が拡大されても閾値さえ満たせばtrue(上限は自動で上がらない)', () => {
+  const html = GOOD_RULE_PAGE_HTML.replace('2,500,000', '5,000,000');
+  const ok = budget.openAiPageIndicatesRuleOk(
+    html,
+    budget.OPENAI_RULE_REQUIRED_TERMS,
+    budget.OPENAI_RULE_REQUIRED_MODEL_TERMS,
+    budget.OPENAI_OFFICIAL_LIMITS.economy,
+    budget.OPENAI_OFFICIAL_LIMITS.premium,
+  );
+  assert.equal(ok, true);
+  // openAiPageIndicatesRuleOk はbool判定のみを返し、上限値そのものは返さない。
+  // OPENAI_APP_SAFETY_LIMITS はページの数値と無関係の固定定数のままであること。
+  assert.equal(budget.OPENAI_APP_SAFETY_LIMITS.economy, Math.floor(budget.OPENAI_OFFICIAL_LIMITS.economy * 0.8));
 });
 
 test('openAiEvaluateEligibility: 未確認・一時停止・期限切れ・有効を判定する', () => {
