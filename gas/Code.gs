@@ -403,10 +403,12 @@ function summarizeTodayFeedback() {
   };
 }
 
-function estimateCalories(inputText, imageBase64, imageMimeType) {
+function estimateCalories(inputText, imageBase64, imageMimeType, imageWidthPx, imageHeightPx) {
   const text = String(inputText || '').trim();
   const image = String(imageBase64 || '').trim();
   const mimeType = String(imageMimeType || 'image/jpeg').trim();
+  const widthPx = Number(imageWidthPx) || 0;
+  const heightPx = Number(imageHeightPx) || 0;
 
   if (!text && !image) {
     throw new Error('食事の説明または画像を入力してください。');
@@ -422,7 +424,7 @@ function estimateCalories(inputText, imageBase64, imageMimeType) {
     (text ? '食事: ' + text : '画像の食事を推定してください。');
 
   const strippedImage = image ? stripDataUrlPrefix(image) : '';
-  const openAiAttempt = tryOpenAiVisionEstimate(prompt, strippedImage, mimeType);
+  const openAiAttempt = tryOpenAiVisionEstimate(prompt, strippedImage, mimeType, widthPx, heightPx);
 
   if (openAiAttempt.ok) {
     return normalizeNutritionResult(JSON.parse(extractJson(openAiAttempt.text)), text || '画像の食事');

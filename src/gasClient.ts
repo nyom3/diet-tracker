@@ -28,7 +28,13 @@ declare global {
 type GoogleScriptRun = {
   withSuccessHandler: (handler: (value: unknown) => void) => GoogleScriptRun;
   withFailureHandler: (handler: (error: Error) => void) => GoogleScriptRun;
-  estimateCalories: (description: string, imageBase64: string, imageMimeType: string) => void;
+  estimateCalories: (
+    description: string,
+    imageBase64: string,
+    imageMimeType: string,
+    imageWidthPx: number,
+    imageHeightPx: number,
+  ) => void;
   processInput: (payload: SaveMealPayload) => void;
   deleteMeal: (id: string) => void;
   listRecentMeals: (limit: number) => void;
@@ -52,9 +58,11 @@ export function estimateCalories(
   description: string,
   imageBase64: string,
   imageMimeType: string,
+  imageWidthPx: number,
+  imageHeightPx: number,
 ): Promise<NutritionResult> {
   return callGas<NutritionResult>((runner) => {
-    runner.estimateCalories(description, imageBase64, imageMimeType);
+    runner.estimateCalories(description, imageBase64, imageMimeType, imageWidthPx, imageHeightPx);
   });
 }
 

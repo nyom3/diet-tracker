@@ -115,6 +115,8 @@ export type WeeklyTrend = {
 export type ImagePayload = {
   base64: string;
   mimeType: string;
+  widthPx: number;
+  heightPx: number;
 };
 
 export type AiProviderMode = 'auto' | 'openai' | 'gemini';

@@ -20,17 +20,12 @@ var OPENAI_MODEL_BY_GROUP = {
   premium: 'gpt-5.6-sol',
 };
 
-// OpenAIは大きい画像でも「モデルごとの最大パッチ予算」まで内部でリサイズしてからtoken化するため、
-// 実寸を取得できなくても、この上限を毎回の予約に使えば実際の課金を上回ることはない(安全側)。
-// 正確な値が公開ドキュメントで確認でき次第、この値を調整すること。
-var OPENAI_IMAGE_TOKEN_RESERVATION = 2600;
 var OPENAI_VISION_MAX_COMPLETION_TOKENS = 1200;
 var OPENAI_TEXT_MAX_COMPLETION_TOKENS = 1500;
 
 var OPENAI_RULE_HELP_URL =
   'https://help.openai.com/en/articles/10306912-sharing-feedback-evaluation-and-fine-tuning-data-and-api-inputs-and-outputs-with-openai';
 var OPENAI_RULE_USER_AGENT = 'Mozilla/5.0 (compatible; diet-tracker-rule-check/1.0)';
-var OPENAI_RULE_REQUIRED_TERMS = ['complimentary', 'daily token'];
 
 function getAiProviderMode() {
   var mode = PropertiesService.getScriptProperties().getProperty(AI_PROVIDER_MODE_PROPERTY);
@@ -114,17 +109,31 @@ function getAiStatus() {
 
 // 食事推定(画像対応)。OpenAIが使えればOpenAIの応答テキストを、使えなければ{ok:false}を返す。
 // 呼び出し側(estimateCalories)はok:falseのとき既存のGemini経路をそのまま使う。
-function tryOpenAiVisionEstimate(promptText, strippedImageBase64, imageMimeType) {
-  var reservationTokens = openAiCalculateReservationForVision(promptText, !!strippedImageBase64);
+// widthPx/heightPx はフロント側でリサイズ済みの実寸(readSelectedImage参照)。画像はあるのに
+// 実寸が取れない場合は、token予約が実消費を下回るリスクを避けるためOpenAIを使わない(fail-closed)。
+function tryOpenAiVisionEstimate(promptText, strippedImageBase64, imageMimeType, widthPx, heightPx) {
+  var hasImage = !!strippedImageBase64;
+
+  if (hasImage && (!widthPx || !heightPx)) {
+    return recordAndReturnBlocked('画像サイズを取得できないため安全側でOpenAIを使用しません。');
+  }
+
+  var reservationTokens = openAiCalculateReservation({
+    promptText: promptText,
+    imageWidthPx: hasImage ? widthPx : 0,
+    imageHeightPx: hasImage ? heightPx : 0,
+    maxOutputTokens: OPENAI_VISION_MAX_COMPLETION_TOKENS,
+  });
+
   var messages = [
     {
       role: 'user',
-      content: strippedImageBase64
+      content: hasImage
         ? [
             { type: 'text', text: promptText },
             {
               type: 'image_url',
-              image_url: { url: 'data:' + imageMimeType + ';base64,' + strippedImageBase64, detail: 'auto' },
+              image_url: { url: 'data:' + imageMimeType + ';base64,' + strippedImageBase64, detail: 'high' },
             },
           ]
         : promptText,
@@ -144,7 +153,7 @@ function tryOpenAiVisionEstimate(promptText, strippedImageBase64, imageMimeType)
 // テキストのみのフィードバック生成(当日/週次)。
 function tryOpenAiTextRequest(promptText, reasoningLevel) {
   var reservationTokens = openAiCalculateReservation({
-    promptCharLength: promptText.length,
+    promptText: promptText,
     maxOutputTokens: OPENAI_TEXT_MAX_COMPLETION_TOKENS,
   });
 
@@ -182,13 +191,6 @@ function buildFallbackNotice(openAiReason, geminiFallbackNotice) {
     notices.push(geminiFallbackNotice);
   }
   return notices.join(' ');
-}
-
-function openAiCalculateReservationForVision(promptText, hasImage) {
-  return openAiCalculateReservation({
-    promptCharLength: promptText.length,
-    maxOutputTokens: OPENAI_VISION_MAX_COMPLETION_TOKENS,
-  }) + (hasImage ? OPENAI_IMAGE_TOKEN_RESERVATION : 0);
 }
 
 // 予約→(ロック外で)OpenAI呼び出し→実績反映、を一通り行う。
@@ -366,10 +368,13 @@ function refreshOpenAiRuleStateIfNeeded() {
     if (response.getResponseCode() !== 200) {
       throw new Error('status=' + response.getResponseCode());
     }
-    var body = response.getContentText().toLowerCase();
-    var lastKnownGood = OPENAI_RULE_REQUIRED_TERMS.every(function (term) {
-      return body.indexOf(term) >= 0;
-    });
+    var lastKnownGood = openAiPageIndicatesRuleOk(
+      response.getContentText(),
+      OPENAI_RULE_REQUIRED_TERMS,
+      OPENAI_RULE_REQUIRED_MODEL_TERMS,
+      OPENAI_OFFICIAL_LIMITS.economy,
+      OPENAI_OFFICIAL_LIMITS.premium,
+    );
     var nextState = { lastCheckedAt: now, lastSuccessAt: now, lastKnownGood: lastKnownGood };
     writeJsonProperty(OPENAI_RULE_STATE_PROPERTY, nextState);
     return nextState;
