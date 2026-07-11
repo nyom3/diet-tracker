@@ -18,6 +18,18 @@
    太字部分が SPREADSHEET_ID
 3. シート名は何でもよい（初回保存時に `food_log` シートを自動作成する）
 
+### 2b. OpenAI API キーを取得する（任意）
+
+OpenAI は設定しなくてもアプリは動作する（Gemini のみで推定・フィードバックを行う）。
+無料デイリートークンを併用したい場合のみ設定する。
+
+1. [OpenAI Platform](https://platform.openai.com/) でAPIキーを発行する
+2. [Data controls](https://platform.openai.com/settings/organization/data-controls/sharing) でAPI入出力の共有を有効にし、「You're enrolled for complimentary daily tokens」の表示を確認する（無料デイリートークンはこの共有opt-inに紐づく）
+3. [プリペイド残高](https://help.openai.com/en/articles/8264644-how-can-i-set-up-prepaid-billing)を設定する。無料枠を使い切っても、正のプリペイド残高がないと利用できない
+4. 上記2の確認ができたら、アプリの「AI」パネルにある「確認した」ボタンを押す（この確認は30日ごとに必要）
+
+無料枠の対象モデル・上限は変更されることがあるため、最新の値は OpenAI の公式ページで確認する。アプリは公開ページを1日1回以下の頻度で自動確認し、7日以上確認できない場合や条件縮小を検知した場合は自動的にOpenAIの利用を停止してGeminiへ切り替える。
+
 ---
 
 ## ローカル開発環境
@@ -89,6 +101,7 @@ npm run gas:push
 |---|---|
 | `GEMINI_API_KEY` | 手順1で取得したAPIキー |
 | `SPREADSHEET_ID` | 手順2で取得したシートID（バインド済みなら不要） |
+| `OPENAI_API_KEY` | 手順2bで取得したAPIキー（任意。未設定でもGeminiのみで動作する） |
 
 ### 10. 初回 Web App deployment を作成する
 
@@ -141,6 +154,8 @@ npm run gas:deploy
 - 写真モードで画像を選択して「推定する」→ 同上
 - 食事日時を過去時刻に変更して保存 → A列 `timestamp` に指定した日時が記録される
 - 保存後にフォームの食事日時が現在時刻へ戻る
+- 画面最上部のAIパネルを開く → 現在のプロバイダー・安全上限までの残量・次回リセット時刻が表示される
+- AIパネルで「Gemini」を選択 → 以降の推定・フィードバックがOpenAIを呼ばずGeminiのみで行われる
 
 ---
 
