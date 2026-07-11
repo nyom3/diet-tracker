@@ -993,6 +993,61 @@ h2 {
   }
 }
 
+.ai-status-panel .collapsible-heading strong {
+  font-size: 14px;
+}
+
+.ai-status-detail {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ai-status-detail li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 10px;
+}
+
+.ai-status-detail span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.ai-status-detail strong {
+  text-align: right;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.ai-eligibility-box {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.ai-eligibility-box p {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.ai-eligibility-actions {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
 @media (min-width: 680px) {
   .compact-panel,
   .photo-grid,
@@ -1050,7 +1105,8 @@ h2 {
   .macro-summary,
   .item-nutrition-grid,
   .target-preview,
-  .trend-list li {
+  .trend-list li,
+  .ai-status-detail li {
     grid-template-columns: 1fr;
   }
 
@@ -1058,7 +1114,12 @@ h2 {
     width: 100%;
   }
 
-  .trend-values {
+  .trend-values,
+  .ai-status-detail strong {
     text-align: left;
+  }
+
+  .ai-eligibility-actions {
+    grid-auto-flow: row;
   }
 }

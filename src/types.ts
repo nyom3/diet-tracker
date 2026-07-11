@@ -116,3 +116,44 @@ export type ImagePayload = {
   base64: string;
   mimeType: string;
 };
+
+export type AiProviderMode = 'auto' | 'openai' | 'gemini';
+export type AiEligibilityStatus = 'confirmed' | 'unconfirmed' | 'expired' | 'paused';
+export type AiRuleStatus = 'ok' | 'stopped';
+
+export type AiUsage = {
+  dateUtc: string;
+  economyTokens: number;
+  premiumTokens: number;
+  reservedEconomyTokens: number;
+  reservedPremiumTokens: number;
+  requestCount: number;
+  lastUsedAt: string;
+};
+
+export type AiLimitPair = {
+  officialLimit: number;
+  appLimit: number;
+};
+
+export type AiStatus = {
+  mode: AiProviderMode;
+  openAiAvailable: boolean;
+  blockingReason: string;
+  lastFallbackReason: string;
+  eligibility: {
+    status: AiEligibilityStatus;
+    confirmedAt: number;
+    recheckIntervalDays: number;
+  };
+  rule: {
+    status: AiRuleStatus;
+    lastCheckedAt: number;
+    lastSuccessAt: number;
+  };
+  usage: AiUsage;
+  limits: {
+    economy: AiLimitPair;
+    premium: AiLimitPair;
+  };
+};

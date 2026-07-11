@@ -1,4 +1,6 @@
 import type {
+  AiProviderMode,
+  AiStatus,
   DailyFeedback,
   FavoriteMeal,
   FavoriteMealPayload,
@@ -41,6 +43,9 @@ type GoogleScriptRun = {
   getLatestWeeklyReview: () => void;
   summarizeTodayFeedback: () => void;
   summarizeWeeklyFeedback: () => void;
+  getAiStatus: () => void;
+  setAiProviderMode: (mode: AiProviderMode) => void;
+  confirmOpenAiEligibility: (action: 'confirm' | 'pause') => void;
 };
 
 export function estimateCalories(
@@ -137,6 +142,24 @@ export function summarizeTodayFeedback(): Promise<DailyFeedback> {
 export function summarizeWeeklyFeedback(): Promise<WeeklyReview> {
   return callGas<WeeklyReview>((runner) => {
     runner.summarizeWeeklyFeedback();
+  });
+}
+
+export function getAiStatus(): Promise<AiStatus> {
+  return callGas<AiStatus>((runner) => {
+    runner.getAiStatus();
+  });
+}
+
+export function setAiProviderMode(mode: AiProviderMode): Promise<AiStatus> {
+  return callGas<AiStatus>((runner) => {
+    runner.setAiProviderMode(mode);
+  });
+}
+
+export function confirmOpenAiEligibility(action: 'confirm' | 'pause'): Promise<AiStatus> {
+  return callGas<AiStatus>((runner) => {
+    runner.confirmOpenAiEligibility(action);
   });
 }
 
