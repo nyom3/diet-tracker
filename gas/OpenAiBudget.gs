@@ -24,7 +24,10 @@ var OPENAI_RESERVATION_SAFETY_MARGIN_TOKENS = 500;
 
 // 公開ページに引き続き存在しているべき文言・モデル名・枠の数値(検証できなければfail-closed)。
 var OPENAI_RULE_REQUIRED_TERMS = ['complimentary', 'daily token'];
-var OPENAI_RULE_REQUIRED_MODEL_TERMS = ['luna'];
+var OPENAI_RULE_MODEL_LIMIT_REQUIREMENTS = [
+  { modelTerm: 'gpt-5.6-luna', minTokens: OPENAI_OFFICIAL_LIMITS.economy },
+  { modelTerm: 'gpt-5.6-sol', minTokens: OPENAI_OFFICIAL_LIMITS.premium },
+];
 
 function openAiUtcDateString(epochMs) {
   var d = new Date(epochMs);
@@ -116,14 +119,48 @@ function openAiCommitFailure(usage, group, reservedTokens, nowIso) {
   return openAiCommitSuccess(usage, group, reservedTokens, reservedTokens, nowIso);
 }
 
-// 32pxパッチ単位での保守的な画像token見積り。実際のAPI課金より多く見積もることはあっても
-// 少なく見積もることがないよう、係数を1より大きく取る。
-function openAiEstimateImageTokens(widthPx, heightPx) {
-  var w = Math.max(1, Math.ceil(Number(widthPx) || 0));
-  var h = Math.max(1, Math.ceil(Number(heightPx) || 0));
-  var patches = Math.ceil(w / 32) * Math.ceil(h / 32);
-  var conservativeTokensPerPatch = 1.3;
-  return Math.ceil(patches * conservativeTokensPerPatch);
+// JPEG/PNGのファイルヘッダから実寸を読む。クライアントが申告したサイズは信頼しない。
+// GAS側ではUtilities.base64Decode後のbyte配列を渡す。Nodeテストでも使えるよう純粋関数にする。
+function openAiImageInfoFromBytes(bytes) {
+  var data = bytes || [];
+  function at(index) {
+    var value = Number(data[index]);
+    return value < 0 ? value + 256 : value;
+  }
+  function readUInt32(index) {
+    return ((at(index) * 0x1000000) + (at(index + 1) << 16) + (at(index + 2) << 8) + at(index + 3));
+  }
+
+  if (data.length >= 24 && at(0) === 0x89 && at(1) === 0x50 && at(2) === 0x4e && at(3) === 0x47 &&
+      at(4) === 0x0d && at(5) === 0x0a && at(6) === 0x1a && at(7) === 0x0a &&
+      at(12) === 0x49 && at(13) === 0x48 && at(14) === 0x44 && at(15) === 0x52) {
+    var pngWidth = readUInt32(16);
+    var pngHeight = readUInt32(20);
+    return pngWidth > 0 && pngHeight > 0 ? { mimeType: 'image/png', widthPx: pngWidth, heightPx: pngHeight } : null;
+  }
+
+  if (data.length < 4 || at(0) !== 0xff || at(1) !== 0xd8) {
+    return null;
+  }
+
+  var cursor = 2;
+  while (cursor + 8 < data.length) {
+    while (cursor < data.length && at(cursor) === 0xff) cursor++;
+    var marker = at(cursor++);
+    if (marker === 0xd8 || marker === 0xd9 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+    if (cursor + 1 >= data.length) return null;
+    var segmentLength = (at(cursor) << 8) + at(cursor + 1);
+    if (segmentLength < 2 || cursor + segmentLength > data.length) return null;
+    var isStartOfFrame = (marker >= 0xc0 && marker <= 0xc3) || (marker >= 0xc5 && marker <= 0xc7) ||
+      (marker >= 0xc9 && marker <= 0xcb) || (marker >= 0xcd && marker <= 0xcf);
+    if (isStartOfFrame) {
+      var jpegHeight = (at(cursor + 3) << 8) + at(cursor + 4);
+      var jpegWidth = (at(cursor + 5) << 8) + at(cursor + 6);
+      return jpegWidth > 0 && jpegHeight > 0 ? { mimeType: 'image/jpeg', widthPx: jpegWidth, heightPx: jpegHeight } : null;
+    }
+    cursor += segmentLength;
+  }
+  return null;
 }
 
 // UTF-8バイト長を返す。byte-level BPE(OpenAIのトークナイザ)ではtoken数はbyte数を超えない
@@ -153,27 +190,20 @@ function utf8ByteLength(text) {
   return bytes;
 }
 
-// プロンプト・画像・出力上限・reasoning予算・固定マージンから今回の最大消費tokenを見積もる。
+// プロンプト・出力上限・reasoning予算・固定マージンから今回の最大消費tokenを見積もる。
+// 画像入力はGPT-5.6で安全なtoken上限を確定できるまでOpenAIへ送らない。
 function openAiCalculateReservation(params) {
   var p = params || {};
   var promptTokens = utf8ByteLength(p.promptText);
-  var imageTokens = p.imageWidthPx && p.imageHeightPx
-    ? openAiEstimateImageTokens(p.imageWidthPx, p.imageHeightPx)
-    : 0;
   var maxOutputTokens = Number(p.maxOutputTokens) || 0;
   var reasoningTokens = Number(p.reasoningTokenBudget) || 0;
-  return promptTokens + imageTokens + maxOutputTokens + reasoningTokens + OPENAI_RESERVATION_SAFETY_MARGIN_TOKENS;
+  return promptTokens + maxOutputTokens + reasoningTokens + OPENAI_RESERVATION_SAFETY_MARGIN_TOKENS;
 }
 
 function openAiStripHtmlTags(html) {
-  return String(html || '').replace(/<[^>]*>/g, ' ');
-}
-
-function openAiExtractNumbers(text) {
-  var matches = String(text || '').match(/\d[\d,]*\d|\d/g) || [];
-  return matches
-    .map(function (raw) { return parseInt(raw.replace(/,/g, ''), 10); })
-    .filter(function (value) { return Number.isFinite(value); });
+  return String(html || '')
+    .replace(/<\/(?:li|p|div|tr|br|h[1-6])\s*>/gi, '\n')
+    .replace(/<[^>]*>/g, ' ');
 }
 
 // 公開ページのプレーンテキストが、無料枠の説明・対象モデル・Tier1-2の枠の数値を
@@ -181,30 +211,47 @@ function openAiExtractNumbers(text) {
 // 枠が公式に拡大されていても、ここでは「最低限この数値以上か」しか見ないため
 // アプリの安全上限(OPENAI_APP_SAFETY_LIMITS)を自動で引き上げることはない。
 //
-// premium枠の数値は経済枠より小さいため「minPremiumLimit以上の数値が1つでもあればOK」だと、
-// economy枠の大きな数値(例: 2,500,000 は 250,000 以上でもある)だけでpremium枠のチェックを
-// すり抜けてしまう。そのため「minPremiumLimit以上の数値が2つ(economy用・premium用)ある」ことを
-// 求める、やや保守的なヒューリスティックにしている。正確な構造化データではなく自由文からの
-// 検証である以上、完全ではない前提で fail-closed 側に倒す設計とする。
-function openAiPageIndicatesRuleOk(html, requiredTerms, requiredModelTerms, minEconomyLimit, minPremiumLimit) {
+// 対象モデルと上限値の対応付けを解析できない自由文は fail-closed とする。
+function openAiParseDailyTokenLimit(raw) {
+  var value = String(raw || '').toLowerCase().replace(/,/g, '').trim();
+  var match = value.match(/^(\d+(?:\.\d+)?)\s*(million|thousand)$/);
+  if (match) {
+    return Math.round(Number(match[1]) * (match[2] === 'million' ? 1000000 : 1000));
+  }
+  return /^\d+$/.test(value) ? Number(value) : 0;
+}
+
+function openAiTier12LimitFromGroupHeading(line) {
+  var match = String(line || '').match(
+    /(\d+(?:\.\d+)?)\s*m\s+token\s+group\s*\(\s*(\d+(?:\.\d+)?)\s*([mk])\s+for\s+usage\s+tiers?\s*1\s*-\s*2\s*\)/i,
+  );
+  return match ? Math.round(Number(match[2]) * (match[3].toLowerCase() === 'm' ? 1000000 : 1000)) : 0;
+}
+
+// 各対象モデルと無料枠上限が同じ説明行に対応付いていることを確認する。
+// 数値の総出現回数では判定しないため、別Tierの大きな数値でpremium枠の縮小を見逃さない。
+function openAiPageIndicatesRuleOk(html, requiredTerms, modelLimitRequirements) {
   var plainText = openAiStripHtmlTags(html).toLowerCase();
 
   var hasRequiredTerms = (requiredTerms || []).every(function (term) {
     return plainText.indexOf(String(term).toLowerCase()) >= 0;
   });
-  var hasModelTerm = (requiredModelTerms || []).some(function (term) {
-    return plainText.indexOf(String(term).toLowerCase()) >= 0;
-  });
-
-  if (!hasRequiredTerms || !hasModelTerm) {
+  if (!hasRequiredTerms) {
     return false;
   }
+  var lines = plainText.split(/\n+/);
+  return (modelLimitRequirements || []).every(function (requirement) {
+    var currentTier12GroupLimit = 0;
+    return lines.some(function (line) {
+      var groupLimit = openAiTier12LimitFromGroupHeading(line);
+      if (groupLimit) currentTier12GroupLimit = groupLimit;
+      if (line.indexOf(String(requirement.modelTerm).toLowerCase()) < 0) return false;
 
-  var numbers = openAiExtractNumbers(plainText);
-  var hasEconomyLimit = numbers.some(function (n) { return n >= minEconomyLimit; });
-  var premiumOrLargerCount = numbers.filter(function (n) { return n >= minPremiumLimit; }).length;
-
-  return hasEconomyLimit && premiumOrLargerCount >= 2;
+      var directLimitMatch = line.match(/up\s+to\s+(\d+(?:\.\d+)?\s*(?:million|thousand)|\d[\d,]*)\s+tokens?\s+per\s+day/i);
+      var directLimit = directLimitMatch ? openAiParseDailyTokenLimit(directLimitMatch[1]) : 0;
+      return Math.max(currentTier12GroupLimit, directLimit) >= requirement.minTokens;
+    });
+  });
 }
 
 // アカウント資格(complimentary daily tokens対象)の状態を判定する。
@@ -285,7 +332,7 @@ if (typeof module !== 'undefined' && typeof module.exports !== 'undefined') {
     OPENAI_APP_SAFETY_LIMITS: OPENAI_APP_SAFETY_LIMITS,
     OPENAI_RESERVATION_SAFETY_MARGIN_TOKENS: OPENAI_RESERVATION_SAFETY_MARGIN_TOKENS,
     OPENAI_RULE_REQUIRED_TERMS: OPENAI_RULE_REQUIRED_TERMS,
-    OPENAI_RULE_REQUIRED_MODEL_TERMS: OPENAI_RULE_REQUIRED_MODEL_TERMS,
+    OPENAI_RULE_MODEL_LIMIT_REQUIREMENTS: OPENAI_RULE_MODEL_LIMIT_REQUIREMENTS,
     openAiUtcDateString: openAiUtcDateString,
     openAiEmptyDailyUsage: openAiEmptyDailyUsage,
     openAiRolloverDailyUsage: openAiRolloverDailyUsage,
@@ -293,10 +340,11 @@ if (typeof module !== 'undefined' && typeof module.exports !== 'undefined') {
     openAiReserve: openAiReserve,
     openAiCommitSuccess: openAiCommitSuccess,
     openAiCommitFailure: openAiCommitFailure,
-    openAiEstimateImageTokens: openAiEstimateImageTokens,
+    openAiImageInfoFromBytes: openAiImageInfoFromBytes,
     utf8ByteLength: utf8ByteLength,
     openAiCalculateReservation: openAiCalculateReservation,
-    openAiExtractNumbers: openAiExtractNumbers,
+    openAiParseDailyTokenLimit: openAiParseDailyTokenLimit,
+    openAiTier12LimitFromGroupHeading: openAiTier12LimitFromGroupHeading,
     openAiPageIndicatesRuleOk: openAiPageIndicatesRuleOk,
     openAiEvaluateEligibility: openAiEvaluateEligibility,
     openAiEvaluateRuleFreshness: openAiEvaluateRuleFreshness,

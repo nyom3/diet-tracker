@@ -107,38 +107,23 @@ function getAiStatus() {
   };
 }
 
-// 食事推定(画像対応)。OpenAIが使えればOpenAIの応答テキストを、使えなければ{ok:false}を返す。
+// 食事推定。OpenAIが使えればOpenAIの応答テキストを、使えなければ{ok:false}を返す。
 // 呼び出し側(estimateCalories)はok:falseのとき既存のGemini経路をそのまま使う。
-// widthPx/heightPx はフロント側でリサイズ済みの実寸(readSelectedImage参照)。画像はあるのに
-// 実寸が取れない場合は、token予約が実消費を下回るリスクを避けるためOpenAIを使わない(fail-closed)。
 function tryOpenAiVisionEstimate(promptText, strippedImageBase64, imageMimeType, widthPx, heightPx) {
   var hasImage = !!strippedImageBase64;
 
-  if (hasImage && (!widthPx || !heightPx)) {
-    return recordAndReturnBlocked('画像サイズを取得できないため安全側でOpenAIを使用しません。');
+  // GPT-5.6 familyのhigh詳細度については、公式ドキュメントにtoken multiplierの上限がない。
+  // 無料枠を実行前に確実に守るまで、画像入力はOpenAIへ送らずGeminiへフォールバックする。
+  if (hasImage) {
+    return recordAndReturnBlocked('OpenAI画像入力のtoken上限を保証できないためGeminiを使用します。');
   }
 
   var reservationTokens = openAiCalculateReservation({
     promptText: promptText,
-    imageWidthPx: hasImage ? widthPx : 0,
-    imageHeightPx: hasImage ? heightPx : 0,
     maxOutputTokens: OPENAI_VISION_MAX_COMPLETION_TOKENS,
   });
 
-  var messages = [
-    {
-      role: 'user',
-      content: hasImage
-        ? [
-            { type: 'text', text: promptText },
-            {
-              type: 'image_url',
-              image_url: { url: 'data:' + imageMimeType + ';base64,' + strippedImageBase64, detail: 'high' },
-            },
-          ]
-        : promptText,
-    },
-  ];
+  var messages = [{ role: 'user', content: promptText }];
 
   return attemptOpenAiChat({
     group: OPENAI_CALL_GROUP,
@@ -371,9 +356,7 @@ function refreshOpenAiRuleStateIfNeeded() {
     var lastKnownGood = openAiPageIndicatesRuleOk(
       response.getContentText(),
       OPENAI_RULE_REQUIRED_TERMS,
-      OPENAI_RULE_REQUIRED_MODEL_TERMS,
-      OPENAI_OFFICIAL_LIMITS.economy,
-      OPENAI_OFFICIAL_LIMITS.premium,
+      OPENAI_RULE_MODEL_LIMIT_REQUIREMENTS,
     );
     var nextState = { lastCheckedAt: now, lastSuccessAt: now, lastKnownGood: lastKnownGood };
     writeJsonProperty(OPENAI_RULE_STATE_PROPERTY, nextState);

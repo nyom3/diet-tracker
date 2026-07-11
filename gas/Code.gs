@@ -34,6 +34,7 @@ const TARGET_KEYS = ['calories_kcal', 'protein_g', 'fat_g', 'carbs_g'];
 const WEEKLY_REVIEW_HEADERS = ['generated_at', 'window_start', 'window_end', 'text'];
 const MIN_VALID_WEIGHT_KG = 20;
 const MAX_VALID_WEIGHT_KG = 300;
+const MAX_AI_IMAGE_BYTES = Math.floor(1.5 * 1024 * 1024);
 
 function doGet() {
   return HtmlService.createHtmlOutputFromFile('index')
@@ -406,9 +407,13 @@ function summarizeTodayFeedback() {
 function estimateCalories(inputText, imageBase64, imageMimeType, imageWidthPx, imageHeightPx) {
   const text = String(inputText || '').trim();
   const image = String(imageBase64 || '').trim();
-  const mimeType = String(imageMimeType || 'image/jpeg').trim();
-  const widthPx = Number(imageWidthPx) || 0;
-  const heightPx = Number(imageHeightPx) || 0;
+  const imageInfo = image ? getTrustedImageInfo(image) : null;
+  if (image && !imageInfo) {
+    throw new Error('JPEGまたはPNG形式の画像を選択してください。');
+  }
+  const mimeType = imageInfo ? imageInfo.mimeType : 'image/jpeg';
+  const widthPx = imageInfo ? imageInfo.widthPx : 0;
+  const heightPx = imageInfo ? imageInfo.heightPx : 0;
 
   if (!text && !image) {
     throw new Error('食事の説明または画像を入力してください。');
@@ -1114,4 +1119,17 @@ function extractJson(text) {
 
 function stripDataUrlPrefix(value) {
   return String(value || '').replace(/^data:[^;]+;base64,/, '');
+}
+
+// API呼び出しはクライアント引数を信頼しない。画像形式・サイズはサーバーでバイト列から判定する。
+function getTrustedImageInfo(imageBase64) {
+  const normalized = stripDataUrlPrefix(imageBase64).replace(/\s/g, '');
+  if (!normalized || Math.floor((normalized.length * 3) / 4) > MAX_AI_IMAGE_BYTES) {
+    return null;
+  }
+  try {
+    return openAiImageInfoFromBytes(Utilities.base64Decode(normalized));
+  } catch (error) {
+    return null;
+  }
 }
