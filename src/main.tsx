@@ -384,6 +384,10 @@ function App(): JSX.Element {
       setAiModeSwitching(true);
       const nextStatus = await confirmOpenAiEligibility(action);
       setAiStatus(nextStatus);
+      setStatus({
+        message: action === 'confirm' ? 'Data Controlsの確認日を更新しました。' : 'OpenAIを一時停止しました。',
+        type: 'success',
+      });
     } catch (error) {
       setStatus({ message: getErrorMessage(error), type: 'error' });
     } finally {
@@ -849,11 +853,7 @@ function App(): JSX.Element {
                     <strong>{formatNextResetJst(aiStatus.usage.dateUtc)}</strong>
                   </li>
                   <li>
-                    <span>公開ルール最終確認</span>
-                    <strong>{formatEpochMs(aiStatus.rule.lastSuccessAt)}</strong>
-                  </li>
-                  <li>
-                    <span>アカウント資格</span>
+                    <span>Data Controls最終確認</span>
                     <strong>{aiEligibilityLabel(aiStatus.eligibility.status)} ({formatEpochMs(aiStatus.eligibility.confirmedAt)})</strong>
                   </li>
                   {aiStatus.lastFallbackReason && (
@@ -864,15 +864,23 @@ function App(): JSX.Element {
                   )}
                 </ul>
                 <div className="ai-eligibility-box">
-                  <p>OpenAI Data Controlsに「You're enrolled for complimentary daily tokens」と表示されていますか？</p>
+                  <p>30日ごとにData Controlsを開き、「You're enrolled for complimentary daily tokens」を確認してください。</p>
                   <div className="ai-eligibility-actions">
+                    <a
+                      className="action-button secondary-action"
+                      href="https://platform.openai.com/settings/organization/data-controls/sharing"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Data Controlsを開く
+                    </a>
                     <button
                       className="action-button secondary-action"
                       type="button"
                       disabled={busy !== null || aiModeSwitching}
                       onClick={() => void handleEligibilityAction('confirm')}
                     >
-                      確認した
+                      確認して更新
                     </button>
                     <button
                       className="action-button secondary-action"

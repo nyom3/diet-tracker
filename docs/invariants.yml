@@ -19,11 +19,11 @@
   ref: AGENTS.md
 
 - id: GEMINI_USER_INITIATED_ONLY
-  statement: Gemini/OpenAI の呼び出し、および OpenAI 公開ルールページの確認は、いずれもユーザーアクション起点のみとし、背景・定期実行から呼ばない
+  statement: Gemini/OpenAI の呼び出しはユーザーアクション起点のみとし、背景・定期実行から呼ばない
   severity: critical
-  triggers: [Gemini呼び出し追加, OpenAI呼び出し追加, 公開ルール監視変更, トリガー設定追加, 時間主導トリガー, onEdit/onOpen追加, FB/まとめ評価機能追加]
+  triggers: [Gemini呼び出し追加, OpenAI呼び出し追加, 資格確認フロー変更, トリガー設定追加, 時間主導トリガー, onEdit/onOpen追加, FB/まとめ評価機能追加]
   rationale: 背景の自動呼び出しはコスト・プライバシー・意図しない API 消費の温床になる。特に OpenAI は課金の可能性があるため、時間主導トリガーからの到達は絶対に避ける
-  check: Gemini/OpenAI を呼ぶ関数(estimateCalories・runAiText・#3 の summarize 系)、および refreshOpenAiRuleStateIfNeeded(getAiStatus 経由)へ到達する起動経路が google.script.run によるユーザー操作のみで、ScriptApp.newTrigger・時間主導・onEdit・onOpen 等の自動起点から到達しない
+  check: Gemini/OpenAI を呼ぶ関数(estimateCalories・runAiText・#3 の summarize 系)への到達経路が google.script.run によるユーザー操作のみで、ScriptApp.newTrigger・時間主導・onEdit・onOpen 等の自動起点から到達しない
   ref: AGENTS.md
 
 - id: GEMINI_API_BOUNDARY
@@ -35,11 +35,11 @@
   ref: AGENTS.md
 
 - id: OPENAI_BUDGET_GATE_NOT_BYPASSABLE
-  statement: OpenAI 呼び出しは、資格確認・公開ルール鮮度・token 予約+日次安全上限チェックの全てを通過した場合のみ許可し、モード(自動/OpenAI/Gemini)の選択によってこのガードを迂回できない
+  statement: OpenAI 呼び出しは、30日以内の手動資格確認・token 予約+日次安全上限チェックの全てを通過した場合のみ許可し、モード(自動/OpenAI/Gemini)の選択によってこのガードを迂回できない
   severity: critical
   triggers: [OpenAiBudget.gs変更, OpenAiProvider.gs変更, AI_PROVIDER_MODE追加, 安全上限変更, 資格確認フロー変更, モデル追加]
   rationale: 無料枠を超えるOpenAI呼び出しは実際の課金に直結する。issue #44 の受け入れ条件は「OpenAIモードでも安全ガードを無効化できない」ことを明示している
-  check: attemptOpenAiChat が reserveOpenAiBudget(openAiEvaluateCallGate 経由)の許可なしに fetchOpenAiChat を呼ばず、mode==='openai' が eligibility/rule/cap のいずれのチェックもスキップしていない。OPENAI_APP_SAFETY_LIMITS は OPENAI_OFFICIAL_LIMITS の80%を超えない
+  check: attemptOpenAiChat が reserveOpenAiBudget(openAiEvaluateCallGate 経由)の許可なしに fetchOpenAiChat を呼ばず、mode==='openai' が30日以内のeligibility/capチェックをスキップしていない。OPENAI_APP_SAFETY_LIMITS は OPENAI_OFFICIAL_LIMITS の80%を超えない
   ref: AGENTS.md
 
 - id: OPENAI_USAGE_LOCK_SAFE

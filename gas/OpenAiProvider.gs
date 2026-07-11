@@ -9,7 +9,6 @@
 
 var AI_PROVIDER_MODE_PROPERTY = 'AI_PROVIDER_MODE';
 var OPENAI_DAILY_USAGE_PROPERTY = 'OPENAI_DAILY_USAGE_JSON';
-var OPENAI_RULE_STATE_PROPERTY = 'OPENAI_RULE_STATE_JSON';
 var OPENAI_ELIGIBILITY_STATE_PROPERTY = 'OPENAI_ELIGIBILITY_STATE_JSON';
 var OPENAI_LAST_FALLBACK_REASON_PROPERTY = 'OPENAI_LAST_FALLBACK_REASON';
 
@@ -22,10 +21,6 @@ var OPENAI_MODEL_BY_GROUP = {
 
 var OPENAI_VISION_MAX_COMPLETION_TOKENS = 1200;
 var OPENAI_TEXT_MAX_COMPLETION_TOKENS = 1500;
-
-var OPENAI_RULE_HELP_URL =
-  'https://help.openai.com/en/articles/10306912-sharing-feedback-evaluation-and-fine-tuning-data-and-api-inputs-and-outputs-with-openai';
-var OPENAI_RULE_USER_AGENT = 'Mozilla/5.0 (compatible; diet-tracker-rule-check/1.0)';
 
 function getAiProviderMode() {
   var mode = PropertiesService.getScriptProperties().getProperty(AI_PROVIDER_MODE_PROPERTY);
@@ -58,11 +53,9 @@ function confirmOpenAiEligibility(action) {
 function getAiStatus() {
   var now = Date.now();
   var mode = getAiProviderMode();
-  var ruleState = refreshOpenAiRuleStateIfNeeded();
   var usage = openAiRolloverDailyUsage(readJsonProperty(OPENAI_DAILY_USAGE_PROPERTY, null), now);
   var eligibilityState = readJsonProperty(OPENAI_ELIGIBILITY_STATE_PROPERTY, null);
   var eligibility = openAiEvaluateEligibility(eligibilityState, now);
-  var rule = openAiEvaluateRuleFreshness(ruleState, now);
   var hasApiKey = !!PropertiesService.getScriptProperties().getProperty('OPENAI_API_KEY');
 
   var blockingReason = '';
@@ -72,24 +65,17 @@ function getAiStatus() {
     blockingReason = '手動でGeminiが選択されています。';
   } else if (eligibility.status !== 'confirmed') {
     blockingReason = eligibility.reason;
-  } else if (rule.status === 'stopped') {
-    blockingReason = rule.reason;
   }
 
   return {
     mode: mode,
-    openAiAvailable: hasApiKey && mode !== 'gemini' && eligibility.status === 'confirmed' && rule.status === 'ok',
+    openAiAvailable: hasApiKey && mode !== 'gemini' && eligibility.status === 'confirmed',
     blockingReason: blockingReason,
     lastFallbackReason: PropertiesService.getScriptProperties().getProperty(OPENAI_LAST_FALLBACK_REASON_PROPERTY) || '',
     eligibility: {
       status: eligibility.status,
       confirmedAt: (eligibilityState && eligibilityState.confirmedAt) || 0,
       recheckIntervalDays: 30,
-    },
-    rule: {
-      status: rule.status,
-      lastCheckedAt: (ruleState && ruleState.lastCheckedAt) || 0,
-      lastSuccessAt: (ruleState && ruleState.lastSuccessAt) || 0,
     },
     usage: {
       dateUtc: usage.dateUtc,
@@ -257,13 +243,10 @@ function reserveOpenAiBudget(mode, group, reservationTokens) {
     var now = Date.now();
     var usage = readJsonProperty(OPENAI_DAILY_USAGE_PROPERTY, null);
     var eligibilityState = readJsonProperty(OPENAI_ELIGIBILITY_STATE_PROPERTY, null);
-    var ruleState = readJsonProperty(OPENAI_RULE_STATE_PROPERTY, null);
-
     var gate = openAiEvaluateCallGate({
       mode: mode,
       nowEpochMs: now,
       eligibilityState: eligibilityState,
-      ruleState: ruleState,
       usage: usage,
       group: group,
       reservationTokens: reservationTokens,
@@ -332,44 +315,6 @@ function fetchOpenAiChat(apiKey, model, messages, options) {
   });
 
   return { statusCode: response.getResponseCode(), body: response.getContentText() };
-}
-
-// OpenAI公式ヘルプページを1日1回以下の頻度で確認し、無料枠の説明が引き続き存在するかを見る。
-// ユーザー操作(getAiStatus呼び出し)起点でのみ実行され、時間主導トリガーからは呼ばれない。
-function refreshOpenAiRuleStateIfNeeded() {
-  var ruleState = readJsonProperty(OPENAI_RULE_STATE_PROPERTY, null);
-  var now = Date.now();
-  var freshness = openAiEvaluateRuleFreshness(ruleState, now);
-  if (!freshness.needsCheck) {
-    return ruleState;
-  }
-
-  try {
-    var response = UrlFetchApp.fetch(OPENAI_RULE_HELP_URL, {
-      method: 'get',
-      muteHttpExceptions: true,
-      headers: { 'User-Agent': OPENAI_RULE_USER_AGENT },
-    });
-    if (response.getResponseCode() !== 200) {
-      throw new Error('status=' + response.getResponseCode());
-    }
-    var lastKnownGood = openAiPageIndicatesRuleOk(
-      response.getContentText(),
-      OPENAI_RULE_REQUIRED_TERMS,
-      OPENAI_RULE_MODEL_LIMIT_REQUIREMENTS,
-    );
-    var nextState = { lastCheckedAt: now, lastSuccessAt: now, lastKnownGood: lastKnownGood };
-    writeJsonProperty(OPENAI_RULE_STATE_PROPERTY, nextState);
-    return nextState;
-  } catch (fetchError) {
-    var fallbackState = {
-      lastCheckedAt: now,
-      lastSuccessAt: (ruleState && ruleState.lastSuccessAt) || 0,
-      lastKnownGood: ruleState ? ruleState.lastKnownGood : false,
-    };
-    writeJsonProperty(OPENAI_RULE_STATE_PROPERTY, fallbackState);
-    return fallbackState;
-  }
 }
 
 function readJsonProperty(key, fallback) {

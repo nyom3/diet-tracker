@@ -26,9 +26,9 @@ OpenAI は設定しなくてもアプリは動作する（Gemini のみで推定
 1. [OpenAI Platform](https://platform.openai.com/) でAPIキーを発行する
 2. [Data controls](https://platform.openai.com/settings/organization/data-controls/sharing) でAPI入出力の共有を有効にし、「You're enrolled for complimentary daily tokens」の表示を確認する（無料デイリートークンはこの共有opt-inに紐づく）
 3. [プリペイド残高](https://help.openai.com/en/articles/8264644-how-can-i-set-up-prepaid-billing)を設定する。無料枠を使い切っても、正のプリペイド残高がないと利用できない
-4. 上記2の確認ができたら、アプリの「AI」パネルにある「確認した」ボタンを押す（この確認は30日ごとに必要）
+4. 上記2の確認ができたら、アプリの「AI」パネルにある「確認して更新」ボタンを押す（この確認は30日ごとに必要）
 
-無料枠の対象モデル・上限は変更されることがあるため、最新の値は OpenAI の公式ページで確認する。アプリは公開ページを1日1回以下の頻度で自動確認し、7日以上確認できない場合や条件縮小を検知した場合は自動的にOpenAIの利用を停止してGeminiへ切り替える。
+アプリは外部ページを自動取得しない。30日ごとの手動確認が期限切れになるとOpenAIを停止してGeminiへ切り替えるため、AIパネルのリンクからData Controlsを確認して「確認して更新」を押す。
 
 ---
 
