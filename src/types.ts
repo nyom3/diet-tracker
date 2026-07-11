@@ -121,7 +121,6 @@ export type ImagePayload = {
 
 export type AiProviderMode = 'auto' | 'openai' | 'gemini';
 export type AiEligibilityStatus = 'confirmed' | 'unconfirmed' | 'expired' | 'paused';
-export type AiRuleStatus = 'ok' | 'stopped';
 
 export type AiUsage = {
   dateUtc: string;
@@ -147,11 +146,6 @@ export type AiStatus = {
     status: AiEligibilityStatus;
     confirmedAt: number;
     recheckIntervalDays: number;
-  };
-  rule: {
-    status: AiRuleStatus;
-    lastCheckedAt: number;
-    lastSuccessAt: number;
   };
   usage: AiUsage;
   limits: {
