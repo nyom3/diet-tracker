@@ -37,6 +37,7 @@ import {
   summarizeWeeklyFeedback,
   updateMeal,
 } from './gasClient';
+import { readSelectedImage } from './imageProcessing';
 import type {
   AiProviderMode,
   AiStatus,
@@ -44,7 +45,6 @@ import type {
   EstimateMode,
   FavoriteMeal,
   FavoriteMealPayload,
-  ImagePayload,
   InputMode,
   MealType,
   NutritionItem,
@@ -1682,92 +1682,6 @@ function createManualPrompt(inputMode: InputMode, description: string): string {
   }
 
   return `次の食事の品ごとのカロリーとPFCを推定してください。JSONのみ回答してください。\n\n食事: ${description}\n\n${schema}`;
-}
-
-const emptyImagePayload: ImagePayload = { base64: '', mimeType: '', widthPx: 0, heightPx: 0 };
-const maxImageDimensionPx = 1536;
-const imageJpegQuality = 0.82;
-const maxImageBytes = 1.5 * 1024 * 1024;
-
-async function readSelectedImage(inputMode: InputMode, file: File | null, note: string): Promise<ImagePayload> {
-  if (inputMode !== 'photo') {
-    return emptyImagePayload;
-  }
-
-  if (!file) {
-    if (!note.trim()) {
-      throw new Error('写真またはメモを入力してください。');
-    }
-
-    return emptyImagePayload;
-  }
-
-  if (!/^image\/(jpeg|png)$/.test(file.type)) {
-    throw new Error('JPEGまたはPNGを選択してください。');
-  }
-
-  return resizeImageForEstimate(file);
-}
-
-// token予約が実消費を上回るよう、送信前に長辺を上限まで縮小してから実寸でtokenを見積もる
-// (詳細は gas/OpenAiProvider.gs の tryOpenAiVisionEstimate を参照)。
-async function resizeImageForEstimate(file: File): Promise<ImagePayload> {
-  const bitmap = await createImageBitmap(file);
-
-  try {
-    const scale = Math.min(1, maxImageDimensionPx / Math.max(bitmap.width, bitmap.height));
-    const widthPx = Math.max(1, Math.round(bitmap.width * scale));
-    const heightPx = Math.max(1, Math.round(bitmap.height * scale));
-
-    const canvas = document.createElement('canvas');
-    canvas.width = widthPx;
-    canvas.height = heightPx;
-    const context = canvas.getContext('2d');
-
-    if (!context) {
-      throw new Error('画像を処理できませんでした。');
-    }
-
-    context.drawImage(bitmap, 0, 0, widthPx, heightPx);
-
-    let quality = imageJpegQuality;
-    let blob = await canvasToJpegBlob(canvas, quality);
-
-    while (blob.size > maxImageBytes && quality > 0.4) {
-      quality -= 0.12;
-      blob = await canvasToJpegBlob(canvas, quality);
-    }
-
-    const base64 = await blobToBase64(blob);
-    return { base64, mimeType: 'image/jpeg', widthPx, heightPx };
-  } finally {
-    bitmap.close();
-  }
-}
-
-function canvasToJpegBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => {
-        if (blob) {
-          resolve(blob);
-        } else {
-          reject(new Error('画像の変換に失敗しました。'));
-        }
-      },
-      'image/jpeg',
-      quality,
-    );
-  });
-}
-
-function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result).replace(/^data:[^;]+;base64,/, ''));
-    reader.onerror = () => reject(new Error('画像を読み取れませんでした。'));
-    reader.readAsDataURL(blob);
-  });
 }
 
 function normalizeTotal(result: Partial<NutritionTotal>): NutritionTotal {
