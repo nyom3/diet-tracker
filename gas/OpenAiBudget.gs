@@ -181,14 +181,15 @@ function utf8ByteLength(text) {
   return bytes;
 }
 
-// プロンプト・出力上限・reasoning予算・固定マージンから今回の最大消費tokenを見積もる。
-// 画像入力はGPT-5.6で安全なtoken上限を確定できるまでOpenAIへ送らない。
+// プロンプト・出力上限・reasoning予算・画像の安全側仮予約・固定マージンから
+// 今回の予約tokenを見積もる。画像の実績値はAPI応答後に予約と置き換える。
 function openAiCalculateReservation(params) {
   var p = params || {};
   var promptTokens = utf8ByteLength(p.promptText);
   var maxOutputTokens = Number(p.maxOutputTokens) || 0;
   var reasoningTokens = Number(p.reasoningTokenBudget) || 0;
-  return promptTokens + maxOutputTokens + reasoningTokens + OPENAI_RESERVATION_SAFETY_MARGIN_TOKENS;
+  var imageReservationTokens = Number(p.imageReservationTokens) || 0;
+  return promptTokens + maxOutputTokens + reasoningTokens + imageReservationTokens + OPENAI_RESERVATION_SAFETY_MARGIN_TOKENS;
 }
 
 // アカウント資格(complimentary daily tokens対象)の状態を判定する。

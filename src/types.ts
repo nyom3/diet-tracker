@@ -142,6 +142,14 @@ export type AiStatus = {
   openAiAvailable: boolean;
   blockingReason: string;
   lastFallbackReason: string;
+  lastUsage?: {
+    totalTokens: number;
+    inputTokens: number;
+    outputTokens: number;
+    requestKind: string;
+    model: string;
+    usedAt: string;
+  } | null;
   eligibility: {
     status: AiEligibilityStatus;
     confirmedAt: number;

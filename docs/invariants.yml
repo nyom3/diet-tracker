@@ -39,7 +39,7 @@
   severity: critical
   triggers: [OpenAiBudget.gs変更, OpenAiProvider.gs変更, AI_PROVIDER_MODE追加, 安全上限変更, 資格確認フロー変更, モデル追加]
   rationale: 無料枠を超えるOpenAI呼び出しは実際の課金に直結する。issue #44 の受け入れ条件は「OpenAIモードでも安全ガードを無効化できない」ことを明示している
-  check: attemptOpenAiChat が reserveOpenAiBudget(openAiEvaluateCallGate 経由)の許可なしに fetchOpenAiChat を呼ばず、mode==='openai' が30日以内のeligibility/capチェックをスキップしていない。OPENAI_APP_SAFETY_LIMITS は OPENAI_OFFICIAL_LIMITS の80%を超えない
+  check: attemptOpenAiChat が reserveOpenAiBudget(openAiEvaluateCallGate 経由)の許可なしに fetchOpenAiChat を呼ばず、mode==='openai' が30日以内のeligibility/capチェックをスキップしていない。画像入力は実測用の安全側仮予約を加えてから送信し、成功時にAPI実績へ置換する。OPENAI_APP_SAFETY_LIMITS は OPENAI_OFFICIAL_LIMITS の80%を超えない
   ref: AGENTS.md
 
 - id: OPENAI_USAGE_LOCK_SAFE
