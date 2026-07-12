@@ -1,5 +1,6 @@
 .review-inbox
 .review-verdict
+.claude/
 .clasp.json
 node_modules/
 dist/
