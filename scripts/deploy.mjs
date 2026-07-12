@@ -15,13 +15,31 @@ if (!deploymentId || deploymentId === 'YOUR_WEB_APP_DEPLOYMENT_ID') {
 }
 
 run('npm', ['run', 'build']);
-run('npx', ['clasp', 'push']);
+const pushResult = run('npx', ['clasp', 'push'], { captureOutput: true });
+if (pushResult.stdout.includes('Skipping push.')) {
+  console.error(
+    'clasp pushがスキップされました。GASは更新されていません。' +
+      'appsscript.jsonの差分を確認してから再実行してください。CIでは--forceを使用しません。',
+  );
+  process.exit(1);
+}
 run('npx', ['clasp', 'deploy', '--deploymentId', deploymentId]);
 
-function run(command, args) {
-  const result = spawnSync(command, args, { stdio: 'inherit', shell: true });
+function run(command, args, options = {}) {
+  const result = spawnSync(command, args, {
+    stdio: options.captureOutput ? ['inherit', 'pipe', 'pipe'] : 'inherit',
+    encoding: 'utf8',
+    shell: true,
+  });
+
+  if (options.captureOutput) {
+    process.stdout.write(result.stdout || '');
+    process.stderr.write(result.stderr || '');
+  }
 
   if (result.status !== 0) {
     process.exit(result.status || 1);
   }
+
+  return result;
 }
