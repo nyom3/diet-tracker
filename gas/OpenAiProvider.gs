@@ -11,6 +11,7 @@ var AI_PROVIDER_MODE_PROPERTY = 'AI_PROVIDER_MODE';
 var OPENAI_DAILY_USAGE_PROPERTY = 'OPENAI_DAILY_USAGE_JSON';
 var OPENAI_ELIGIBILITY_STATE_PROPERTY = 'OPENAI_ELIGIBILITY_STATE_JSON';
 var OPENAI_LAST_FALLBACK_REASON_PROPERTY = 'OPENAI_LAST_FALLBACK_REASON';
+var OPENAI_LAST_USAGE_PROPERTY = 'OPENAI_LAST_USAGE_JSON';
 
 var AI_PROVIDER_LOCK_TIMEOUT_MS = 10000;
 var OPENAI_CALL_GROUP = OPENAI_ECONOMY_GROUP;
@@ -20,6 +21,9 @@ var OPENAI_MODEL_BY_GROUP = {
 };
 
 var OPENAI_VISION_MAX_COMPLETION_TOKENS = 1200;
+// GPT-5.6の画像token倍率は公開されていないため、実測を始める際の安全側仮予約。
+// 成功時はAPIが返した実token数に置き換わる。
+var OPENAI_VISION_IMAGE_RESERVATION_TOKENS = 100000;
 var OPENAI_TEXT_MAX_COMPLETION_TOKENS = 1500;
 
 function getAiProviderMode() {
@@ -57,6 +61,7 @@ function getAiStatus() {
   var eligibilityState = readJsonProperty(OPENAI_ELIGIBILITY_STATE_PROPERTY, null);
   var eligibility = openAiEvaluateEligibility(eligibilityState, now);
   var hasApiKey = !!PropertiesService.getScriptProperties().getProperty('OPENAI_API_KEY');
+  var lastUsage = readJsonProperty(OPENAI_LAST_USAGE_PROPERTY, null);
 
   var blockingReason = '';
   if (!hasApiKey) {
@@ -72,6 +77,7 @@ function getAiStatus() {
     openAiAvailable: hasApiKey && mode !== 'gemini' && eligibility.status === 'confirmed',
     blockingReason: blockingReason,
     lastFallbackReason: PropertiesService.getScriptProperties().getProperty(OPENAI_LAST_FALLBACK_REASON_PROPERTY) || '',
+    lastUsage: lastUsage,
     eligibility: {
       status: eligibility.status,
       confirmedAt: (eligibilityState && eligibilityState.confirmedAt) || 0,
@@ -98,18 +104,25 @@ function getAiStatus() {
 function tryOpenAiVisionEstimate(promptText, strippedImageBase64, imageMimeType, widthPx, heightPx) {
   var hasImage = !!strippedImageBase64;
 
-  // GPT-5.6 familyのhigh詳細度については、公式ドキュメントにtoken multiplierの上限がない。
-  // 無料枠を実行前に確実に守るまで、画像入力はOpenAIへ送らずGeminiへフォールバックする。
-  if (hasImage) {
-    return recordAndReturnBlocked('OpenAI画像入力のtoken上限を保証できないためGeminiを使用します。');
-  }
-
   var reservationTokens = openAiCalculateReservation({
     promptText: promptText,
     maxOutputTokens: OPENAI_VISION_MAX_COMPLETION_TOKENS,
+    imageReservationTokens: hasImage ? OPENAI_VISION_IMAGE_RESERVATION_TOKENS : 0,
   });
 
-  var messages = [{ role: 'user', content: promptText }];
+  var content = [{ type: 'text', text: promptText }];
+  if (hasImage) {
+    // detailは指定しない。GPT-5.6ではoriginal相当となり、クライアント側で
+    // 長辺1536px以下・JPEG最大1.5MBにした画像をそのまま実測する。
+    content.push({
+      type: 'image_url',
+      image_url: {
+        url: 'data:' + imageMimeType + ';base64,' + strippedImageBase64,
+      },
+    });
+  }
+
+  var messages = [{ role: 'user', content: hasImage ? content : promptText }];
 
   return attemptOpenAiChat({
     group: OPENAI_CALL_GROUP,
@@ -118,6 +131,7 @@ function tryOpenAiVisionEstimate(promptText, strippedImageBase64, imageMimeType,
     jsonMode: true,
     reasoningEffort: 'low',
     maxCompletionTokens: OPENAI_VISION_MAX_COMPLETION_TOKENS,
+    requestKind: hasImage ? 'vision' : 'text-estimate',
   });
 }
 
@@ -135,6 +149,7 @@ function tryOpenAiTextRequest(promptText, reasoningLevel) {
     jsonMode: false,
     reasoningEffort: reasoningLevel || 'low',
     maxCompletionTokens: OPENAI_TEXT_MAX_COMPLETION_TOKENS,
+    requestKind: 'text',
   });
 }
 
@@ -214,6 +229,7 @@ function attemptOpenAiChat(request) {
   }
 
   commitOpenAiUsage(request.group, request.reservationTokens, totalTokens, true);
+  recordLastOpenAiUsage(payload.usage, request.requestKind, model, totalTokens);
   clearFallbackReason();
   return { ok: true, text: String(text).trim() };
 }
@@ -252,6 +268,18 @@ function recordFallbackReason(reason) {
 
 function clearFallbackReason() {
   PropertiesService.getScriptProperties().deleteProperty(OPENAI_LAST_FALLBACK_REASON_PROPERTY);
+}
+
+function recordLastOpenAiUsage(usage, requestKind, model, fallbackTotalTokens) {
+  var source = usage || {};
+  writeJsonProperty(OPENAI_LAST_USAGE_PROPERTY, {
+    totalTokens: Number(source.total_tokens) || Number(fallbackTotalTokens) || 0,
+    inputTokens: Number(source.prompt_tokens) || 0,
+    outputTokens: Number(source.completion_tokens) || 0,
+    requestKind: requestKind || '',
+    model: model || '',
+    usedAt: new Date().toISOString(),
+  });
 }
 
 // token予約はLockService内で行い、実際のAPI呼び出しはロック外で行う(外部通信でロックを長時間

@@ -840,6 +840,15 @@ function App(): JSX.Element {
                     <span>本日の使用token</span>
                     <strong>{aiStatus.usage.economyTokens.toLocaleString()} + 予約中{aiStatus.usage.reservedEconomyTokens.toLocaleString()}</strong>
                   </li>
+                  {aiStatus.lastUsage && (
+                    <li>
+                      <span>直近のOpenAI利用</span>
+                      <strong>
+                        {aiStatus.lastUsage.totalTokens.toLocaleString()} token
+                        （入力{aiStatus.lastUsage.inputTokens.toLocaleString()} / 出力{aiStatus.lastUsage.outputTokens.toLocaleString()}）
+                      </strong>
+                    </li>
+                  )}
                   <li>
                     <span>アプリ安全上限までの残量</span>
                     <strong>{Math.max(0, aiStatus.limits.economy.appLimit - aiStatus.usage.economyTokens - aiStatus.usage.reservedEconomyTokens).toLocaleString()} token</strong>
