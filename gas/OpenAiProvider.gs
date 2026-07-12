@@ -193,7 +193,7 @@ function attemptOpenAiChat(request) {
 
   if (response.statusCode < 200 || response.statusCode >= 300) {
     commitOpenAiUsage(request.group, request.reservationTokens, 0, false);
-    return recordAndReturnBlocked('OpenAI API の呼び出しに失敗しました。status=' + response.statusCode);
+    return recordAndReturnBlocked(describeOpenAiApiError(response));
   }
 
   var payload;
@@ -216,6 +216,29 @@ function attemptOpenAiChat(request) {
   commitOpenAiUsage(request.group, request.reservationTokens, totalTokens, true);
   clearFallbackReason();
   return { ok: true, text: String(text).trim() };
+}
+
+// 応答本文はキー断片などを含む可能性があるため画面へ返さず、401だけを安全な原因別メッセージにする。
+function describeOpenAiApiError(response) {
+  if (response.statusCode !== 401) {
+    return 'OpenAI API の呼び出しに失敗しました。status=' + response.statusCode;
+  }
+
+  var errorMessage = '';
+  try {
+    var payload = JSON.parse(response.body);
+    errorMessage = String(payload && payload.error && payload.error.message || '').toLowerCase();
+  } catch (parseError) {
+    // 401で本文がJSONでない場合も、認証エラーとして安全な汎用メッセージを返す。
+  }
+
+  if (errorMessage.indexOf('ip not authorized') !== -1 || errorMessage.indexOf('ip allowlist') !== -1) {
+    return 'OpenAI API の認証に失敗しました。GASの送信元IPがOpenAIの許可リスト外です。';
+  }
+  if (errorMessage.indexOf('member of an organization') !== -1) {
+    return 'OpenAI API の認証に失敗しました。APIキーの組織メンバー権限を確認してください。';
+  }
+  return 'OpenAI API の認証に失敗しました。OPENAI_API_KEY の有効性を確認してください。';
 }
 
 function recordAndReturnBlocked(reason) {
