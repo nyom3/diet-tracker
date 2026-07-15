@@ -20,12 +20,16 @@
 }
 
 html {
+  max-width: 100%;
+  overflow-x: clip;
   background: var(--bg);
 }
 
 body {
   margin: 0;
+  max-width: 100%;
   min-height: 100vh;
+  overflow-x: clip;
   background:
     linear-gradient(180deg, rgba(216, 240, 122, 0.22), rgba(216, 240, 122, 0) 220px),
     var(--bg);
@@ -37,7 +41,12 @@ body {
 button,
 input,
 textarea {
+  max-width: 100%;
   font: inherit;
+}
+
+img {
+  max-width: 100%;
 }
 
 button {
@@ -49,10 +58,130 @@ button:disabled {
   opacity: 0.58;
 }
 
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 3px solid rgba(36, 107, 72, 0.42);
+  outline-offset: 2px;
+}
+
 .app-shell {
   width: min(100% - 24px, 720px);
   margin: 0 auto;
   padding: max(18px, env(safe-area-inset-top)) 0 calc(96px + env(safe-area-inset-bottom));
+}
+
+.app-view {
+  min-width: 0;
+}
+
+.app-view,
+.panel,
+.result-panel,
+.meal-form,
+.recent-list,
+.trend-list {
+  max-width: 100%;
+}
+
+.app-header-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-button {
+  flex: 0 0 44px;
+}
+
+.view-status {
+  margin: 0 0 12px;
+  border: 1px solid rgba(36, 107, 72, 0.22);
+  border-radius: 8px;
+  background: rgba(216, 240, 122, 0.28);
+  padding: 10px 12px;
+  color: var(--success);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.view-status.error {
+  border-color: rgba(181, 54, 46, 0.22);
+  background: rgba(181, 54, 46, 0.06);
+  color: var(--danger);
+}
+
+.bottom-navigation {
+  position: fixed;
+  right: 50%;
+  bottom: max(8px, env(safe-area-inset-bottom));
+  z-index: 20;
+  display: grid;
+  width: min(calc(100% - 16px), 720px);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  transform: translateX(50%);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 12px 36px rgba(23, 38, 29, 0.18);
+  padding: 5px;
+}
+
+.bottom-navigation-item {
+  display: grid;
+  min-width: 0;
+  min-height: 56px;
+  place-items: center;
+  gap: 2px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.bottom-navigation-item.active {
+  background: var(--surface-soft);
+  color: var(--primary);
+}
+
+.settings-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  justify-content: center;
+  overflow: hidden;
+  background: rgba(24, 32, 27, 0.38);
+}
+
+.settings-sheet {
+  width: min(100%, 720px);
+  min-width: 0;
+  height: 100dvh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: var(--bg);
+  padding: max(18px, env(safe-area-inset-top)) 12px max(24px, env(safe-area-inset-bottom));
+}
+
+.settings-sheet-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.settings-sheet-content {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
 }
 
 .app-header {
@@ -360,6 +489,7 @@ h2 {
 
 .ratio-field {
   display: grid;
+  min-width: 0;
   gap: 6px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -374,8 +504,9 @@ h2 {
 }
 
 .ratio-field input {
+  min-width: 0;
   width: 100%;
-  min-height: 38px;
+  min-height: 44px;
   border: 0;
   background: transparent;
   color: var(--ink);
@@ -423,6 +554,13 @@ h2 {
   border-radius: 8px;
   background: var(--surface);
   padding: 10px;
+}
+
+.trend-list li > div,
+.trend-values,
+.ai-status-detail strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .trend-list strong,
@@ -725,7 +863,7 @@ h2 {
 
 .edit-banner button {
   display: inline-flex;
-  min-height: 36px;
+  min-height: 44px;
   align-items: center;
   gap: 6px;
   border: 1px solid rgba(36, 107, 72, 0.24);
@@ -781,6 +919,7 @@ h2 {
 
 .macro-card {
   display: grid;
+  min-width: 0;
   grid-template-columns: 1fr auto;
   gap: 6px;
   border: 1px solid var(--line);
@@ -797,7 +936,7 @@ h2 {
 }
 
 .macro-card input {
-  min-height: 38px;
+  min-height: 44px;
   border: 0;
   padding: 0;
   font-size: 20px;
@@ -888,6 +1027,7 @@ h2 {
 
 .item-nutrition-field {
   display: grid;
+  min-width: 0;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 6px;
@@ -905,7 +1045,7 @@ h2 {
 .item-nutrition-field input {
   min-width: 0;
   width: 100%;
-  min-height: 36px;
+  min-height: 44px;
   border: 0;
   padding: 0;
   color: var(--ink);
@@ -950,24 +1090,26 @@ h2 {
 
 .sticky-actions {
   position: fixed;
-  right: 0;
+  right: 50%;
   bottom: 0;
-  left: 0;
   z-index: 10;
   display: grid;
+  width: min(100%, 720px);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
   gap: 8px;
+  transform: translateX(50%);
   border-top: 1px solid var(--line);
   background: #f6f7f2;
   padding: 10px max(12px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
 }
 
 .sticky-actions .primary-action {
-  width: min(100%, 720px);
-  margin: 0 auto;
+  width: 100%;
 }
 
 .status {
-  width: min(100%, 720px);
+  grid-column: 1 / -1;
+  width: 100%;
   min-height: 18px;
   margin: 0 auto;
   color: var(--muted);
@@ -1063,6 +1205,18 @@ h2 {
 @media (max-width: 420px) {
   .app-shell {
     width: min(100% - 16px, 720px);
+  }
+
+  .app-header {
+    gap: 8px;
+  }
+
+  .app-header-actions {
+    gap: 6px;
+  }
+
+  .today-chip {
+    padding: 8px 10px;
   }
 
   .section-heading {
