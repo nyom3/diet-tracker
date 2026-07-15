@@ -23,9 +23,9 @@ import {
   deleteMeal,
   estimateCalories,
   getAiStatus,
+  getDashboardData,
   getTargets,
   getTodaySummary,
-  getWeeklyTrend,
   listFavorites,
   listRecentMeals,
   processInput,
@@ -33,13 +33,14 @@ import {
   saveTargets,
   setAiProviderMode,
   summarizeTodayFeedback,
-  summarizeWeeklyFeedback,
   updateMeal,
 } from './gasClient';
 import { prepareSelectedImage, readSelectedImage, type PreparedImage } from './imageProcessing';
 import type {
   AiProviderMode,
   AiStatus,
+  DashboardData,
+  DashboardRangeDays,
   DailyFeedback,
   EstimateMode,
   FavoriteMeal,
@@ -55,8 +56,6 @@ import type {
   SaveMealPayload,
   SaveTargetsPayload,
   TodaySummary,
-  WeeklyReview,
-  WeeklyTrend,
 } from './types';
 import { AppHeader } from './components/AppHeader';
 import { BottomNavigation } from './components/BottomNavigation';
@@ -70,7 +69,6 @@ const mealTypes: MealType[] = ['朝', '昼', '夜', '間食'];
 const recentMealsPreviewCount = 3;
 const draftStorageKey = 'diet-tracker-meal-draft-v1';
 const targetPanelStorageKey = 'panel_target_open';
-const weeklyPanelStorageKey = 'panel_weekly_open';
 const aiPanelStorageKey = 'panel_ai_open';
 const quickUndoWindowMs = 8000;
 const nutritionKeys: Array<{ key: NutritionKey; label: string; unit: string; step: string }> = [
@@ -236,22 +234,21 @@ export function App(): JSX.Element {
   const [targetCaloriesInput, setTargetCaloriesInput] = React.useState('');
   const [isTargetPanelOpen, setIsTargetPanelOpen] = React.useState(() => readBooleanStorage(targetPanelStorageKey, false));
   const [pfcRatio, setPfcRatio] = React.useState(defaultPfcRatio);
-  const [weeklyTrend, setWeeklyTrend] = React.useState<WeeklyTrend | null>(null);
-  const [weeklyReview, setWeeklyReview] = React.useState<WeeklyReview | null>(null);
-  const [isWeeklyPanelOpen, setIsWeeklyPanelOpen] = React.useState(() => readBooleanStorage(weeklyPanelStorageKey, false));
+  const [dashboardRange, setDashboardRange] = React.useState<DashboardRangeDays>(30);
+  const [dashboardCache, setDashboardCache] = React.useState<Partial<Record<DashboardRangeDays, DashboardData>>>({});
   const [dailyFeedback, setDailyFeedback] = React.useState<DailyFeedback | null>(null);
   const [selectedMealId, setSelectedMealId] = React.useState('');
   const [recentStatus, setRecentStatus] = React.useState<ResourceStatus>('loading');
   const [favoritesStatus, setFavoritesStatus] = React.useState<ResourceStatus>('loading');
   const [summaryStatus, setSummaryStatus] = React.useState<ResourceStatus>('loading');
   const [targetsStatus, setTargetsStatus] = React.useState<ResourceStatus>('loading');
-  const [weeklyStatus, setWeeklyStatus] = React.useState<ResourceStatus>('loading');
+  const [dashboardStatus, setDashboardStatus] = React.useState<ResourceStatus>('loading');
   const [aiStatus, setAiStatus] = React.useState<AiStatus | null>(null);
   const [isAiPanelOpen, setIsAiPanelOpen] = React.useState(() => readBooleanStorage(aiPanelStorageKey, false));
   const [aiModeSwitching, setAiModeSwitching] = React.useState(false);
   const [status, setStatus] = React.useState<{ message: string; type?: 'success' | 'error' }>({ message: '' });
   const [busy, setBusy] = React.useState<
-    'estimate' | 'save' | 'quick' | 'favorite' | 'removeFavorite' | 'feedback' | 'targets' | 'weekly' | null
+    'estimate' | 'save' | 'quick' | 'favorite' | 'removeFavorite' | 'feedback' | 'targets' | null
   >(null);
   const [quickUndo, setQuickUndo] = React.useState<QuickUndo | null>(null);
   const draftPausedRef = React.useRef(true);
@@ -260,6 +257,7 @@ export function App(): JSX.Element {
   const hasMountedViewRef = React.useRef(false);
   const photoInputRef = React.useRef<HTMLInputElement | null>(null);
   const photoRequestIdRef = React.useRef(0);
+  const dashboardRequestIdRef = React.useRef(0);
 
   const estimationInput = inputMode === 'photo'
     ? photoNote.trim()
@@ -288,6 +286,12 @@ export function App(): JSX.Element {
       URL.revokeObjectURL(selectedImage.previewUrl);
     };
   }, [selectedImage]);
+
+  React.useEffect(() => {
+    if (currentView === 'trend') {
+      void loadDashboard(dashboardRange);
+    }
+  }, [currentView, dashboardRange]);
 
   React.useEffect(() => {
     void refreshDashboard(false);
@@ -436,14 +440,6 @@ export function App(): JSX.Element {
     });
   }
 
-  function toggleWeeklyPanel(): void {
-    setIsWeeklyPanelOpen((current) => {
-      const next = !current;
-      writeBooleanStorage(weeklyPanelStorageKey, next);
-      return next;
-    });
-  }
-
   function toggleAiPanel(): void {
     setIsAiPanelOpen((current) => {
       const next = !current;
@@ -563,6 +559,7 @@ export function App(): JSX.Element {
       }
       clearMealDraft();
       resetForm();
+      invalidateDashboardCache();
       await refreshDashboard(false);
       setStatus({ message: selectedMealId ? '更新しました。' : '保存しました。', type: 'success' });
       navigateTo('today');
@@ -676,18 +673,37 @@ export function App(): JSX.Element {
     }
   }
 
-  async function loadWeekly(): Promise<boolean> {
-    setWeeklyStatus('loading');
+  async function loadDashboard(rangeDays: DashboardRangeDays, force = false): Promise<void> {
+    if (!force && dashboardCache[rangeDays]) {
+      setDashboardStatus('loaded');
+      return;
+    }
+
+    const requestId = dashboardRequestIdRef.current + 1;
+    dashboardRequestIdRef.current = requestId;
+    setDashboardStatus('loading');
     try {
-      const trend = await getWeeklyTrend();
-      setWeeklyTrend(trend);
-      setWeeklyReview(trend.latest_review);
-      setWeeklyStatus('loaded');
-      return true;
+      const dashboard = await getDashboardData(rangeDays);
+      if (dashboardRequestIdRef.current !== requestId) {
+        return;
+      }
+      setDashboardCache((current) => ({ ...current, [rangeDays]: dashboard }));
+      setDashboardStatus('loaded');
     } catch (error) {
-      console.warn('週次トレンドの読み込みに失敗しました:', error);
-      setWeeklyStatus('error');
-      return false;
+      if (dashboardRequestIdRef.current !== requestId) {
+        return;
+      }
+      console.warn('推移データの読み込みに失敗しました:', error);
+      setDashboardStatus('error');
+    }
+  }
+
+  function invalidateDashboardCache(): void {
+    dashboardRequestIdRef.current += 1;
+    setDashboardCache({});
+    setDashboardStatus('loading');
+    if (currentView === 'trend') {
+      void loadDashboard(dashboardRange, true);
     }
   }
 
@@ -697,7 +713,6 @@ export function App(): JSX.Element {
       loadFavorites(),
       loadSummary(),
       loadTargets(),
-      loadWeekly(),
     ]);
 
     if (!showStatus) {
@@ -755,6 +770,7 @@ export function App(): JSX.Element {
       setBusy('quick');
       setStatus({ message: 'クイック登録中です。' });
       const result = await processInput(buildQuickPayload(meal));
+      invalidateDashboardCache();
       await refreshDashboard(false);
       showQuickUndo(result.id, meal.description);
       setStatus({ message: 'クイック登録しました。', type: 'success' });
@@ -771,6 +787,7 @@ export function App(): JSX.Element {
       setBusy('quick');
       setStatus({ message: 'お気に入りを登録中です。' });
       const result = await processInput(buildQuickPayload(favorite));
+      invalidateDashboardCache();
       await refreshDashboard(false);
       showQuickUndo(result.id, favorite.description);
       setStatus({ message: 'お気に入りから登録しました。', type: 'success' });
@@ -799,6 +816,7 @@ export function App(): JSX.Element {
       setBusy('quick');
       setStatus({ message: '取り消し中です。' });
       await deleteMeal(id);
+      invalidateDashboardCache();
       await refreshDashboard(false);
       setStatus({ message: `${description}の登録を取り消しました。`, type: 'success' });
     } catch (error) {
@@ -867,31 +885,12 @@ export function App(): JSX.Element {
       setStatus({ message: '目標を保存中です。' });
       const result = await saveTargets(payload);
       setTargets(result.targets);
+      invalidateDashboardCache();
       await refreshDashboard(false);
       setStatus({ message: '目標を保存しました。', type: 'success' });
     } catch (error) {
       setStatus({ message: getErrorMessage(error), type: 'error' });
     } finally {
-      setBusy(null);
-    }
-  }
-
-  async function handleWeeklyFeedback(): Promise<void> {
-    try {
-      setBusy('weekly');
-      setStatus({ message: '週次コメントを取得中です。' });
-      const review = await summarizeWeeklyFeedback();
-      setWeeklyReview(review);
-      await refreshDashboard(false);
-      setStatus(
-        review.fallback_notice
-          ? { message: `週次コメントを取得しました。${review.fallback_notice}`, type: 'error' }
-          : { message: '週次コメントを取得しました。', type: 'success' },
-      );
-    } catch (error) {
-      setStatus({ message: getErrorMessage(error), type: 'error' });
-    } finally {
-      await loadAiStatus();
       setBusy(null);
     }
   }
@@ -1549,121 +1548,33 @@ export function App(): JSX.Element {
       )}
 
       {currentView === 'trend' && (
-        <TrendView>
-          <section className={`panel target-panel collapsible-panel ${isTargetPanelOpen ? 'open' : ''}`} aria-expanded={isTargetPanelOpen}>
-        <button
-          className="collapsible-heading"
-          type="button"
-          aria-expanded={isTargetPanelOpen}
-          onClick={toggleTargetPanel}
+        <TrendView
+          data={dashboardCache[dashboardRange] ?? null}
+          status={dashboardStatus}
+          rangeDays={dashboardRange}
+          onRangeChange={setDashboardRange}
+          onRetry={() => void loadDashboard(dashboardRange, true)}
         >
-          <span>
-            <span className="section-label">目標</span>
-            <strong>1日の基準</strong>
-          </span>
-          <ChevronDown className={isTargetPanelOpen ? 'expanded' : ''} size={18} aria-hidden="true" />
-        </button>
-        <PanelStatusNote
-          status={targetsStatus}
-          hasData={hasTargets}
-          loadingText="目標を読み込み中です。"
-          errorText="目標を読み込めませんでした。"
-          onRetry={() => void loadTargets()}
-        />
-        {isTargetPanelOpen && (
-          <div className="collapsible-body">
-            <div className="target-grid">
-              <label className="field">
-                <span>目標 kcal</span>
-                <input
-                  value={targetCaloriesInput}
-                  type="number"
-                  min="0"
-                  step="1"
-                  inputMode="numeric"
-                  onChange={(event) => setTargetCaloriesInput(event.target.value)}
-                />
-              </label>
-              <div className="ratio-grid">
-                <RatioField label="P%" value={pfcRatio.protein} onChange={(value) => setPfcRatio({ ...pfcRatio, protein: value })} />
-                <RatioField label="F%" value={pfcRatio.fat} onChange={(value) => setPfcRatio({ ...pfcRatio, fat: value })} />
-                <RatioField label="C%" value={pfcRatio.carbs} onChange={(value) => setPfcRatio({ ...pfcRatio, carbs: value })} />
-              </div>
-            </div>
-            <div className="target-preview">
-              <span>{Math.round(calculatedTargets.calories_kcal)} kcal</span>
-              <span>P {calculatedTargets.protein_g}g</span>
-              <span>F {calculatedTargets.fat_g}g</span>
-              <span>C {calculatedTargets.carbs_g}g</span>
-            </div>
-            <button className="action-button secondary-action" type="button" disabled={busy !== null} onClick={handleSaveTargets}>
-              {busy === 'targets' ? <Loader2 className="spin" size={18} /> : <Save size={18} />}
-              目標を保存
+          <section className={`panel target-panel collapsible-panel ${isTargetPanelOpen ? 'open' : ''}`} aria-expanded={isTargetPanelOpen}>
+            <button className="collapsible-heading" type="button" aria-expanded={isTargetPanelOpen} onClick={toggleTargetPanel}>
+              <span><span className="section-label">目標</span><strong>1日の基準</strong></span>
+              <ChevronDown className={isTargetPanelOpen ? 'expanded' : ''} size={18} aria-hidden="true" />
             </button>
-          </div>
-        )}
-          </section>
-
-      <section className={`panel weekly-panel collapsible-panel ${isWeeklyPanelOpen ? 'open' : ''}`} aria-expanded={isWeeklyPanelOpen}>
-        <div className="weekly-heading-row">
-          <button
-            className="collapsible-heading"
-            type="button"
-            aria-expanded={isWeeklyPanelOpen}
-            onClick={toggleWeeklyPanel}
-          >
-            <span>
-              <span className="section-label">7日</span>
-              <strong>トレンド</strong>
-            </span>
-            <ChevronDown className={isWeeklyPanelOpen ? 'expanded' : ''} size={18} aria-hidden="true" />
-          </button>
-          <button
-            className="action-button secondary-action weekly-feedback-button"
-            type="button"
-            disabled={busy !== null}
-            onClick={handleWeeklyFeedback}
-          >
-            {busy === 'weekly' ? <Loader2 className="spin" size={18} /> : <MessageCircle size={18} />}
-            週次コメント
-          </button>
-        </div>
-        <PanelStatusNote
-          status={weeklyStatus}
-          hasData={weeklyTrend !== null}
-          loadingText="7日トレンドを読み込み中です。"
-          errorText="7日トレンドを読み込めませんでした。"
-          onRetry={() => void loadWeekly()}
-        />
-        {isWeeklyPanelOpen && (
-          <div className="collapsible-body">
-            {weeklyTrend ? (
-              <ul className="trend-list">
-                {weeklyTrend.days.map((day) => (
-                  <li key={day.date}>
-                    <div>
-                      <strong>{formatShortDate(day.date)}</strong>
-                      <span>{day.count > 0 ? `${day.count}件` : '食事0件'} / 体重 {formatWeightKg(day.weight_kg)}</span>
-                    </div>
-                    <div className="trend-values">
-                      <span className={isOverTarget(day.total.calories_kcal, targets.calories_kcal) ? 'over' : ''}>
-                        {Math.round(day.total.calories_kcal)}{targets.calories_kcal === null ? '' : `/${Math.round(targets.calories_kcal)}`} kcal
-                      </span>
-                      <small>P{day.total.protein_g} / F{day.total.fat_g} / C{day.total.carbs_g}</small>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              weeklyStatus === 'loaded' && <p className="empty-text">直近7日間の記録がありません。</p>
+            <PanelStatusNote status={targetsStatus} hasData={hasTargets} loadingText="目標を読み込み中です。" errorText="目標を読み込めませんでした。" onRetry={() => void loadTargets()} />
+            {isTargetPanelOpen && (
+              <div className="collapsible-body">
+                <div className="target-grid">
+                  <label className="field"><span>目標 kcal</span><input value={targetCaloriesInput} type="number" min="0" step="1" inputMode="numeric" onChange={(event) => setTargetCaloriesInput(event.target.value)} /></label>
+                  <div className="ratio-grid">
+                    <RatioField label="P%" value={pfcRatio.protein} onChange={(value) => setPfcRatio({ ...pfcRatio, protein: value })} />
+                    <RatioField label="F%" value={pfcRatio.fat} onChange={(value) => setPfcRatio({ ...pfcRatio, fat: value })} />
+                    <RatioField label="C%" value={pfcRatio.carbs} onChange={(value) => setPfcRatio({ ...pfcRatio, carbs: value })} />
+                  </div>
+                </div>
+                <div className="target-preview"><span>{Math.round(calculatedTargets.calories_kcal)} kcal</span><span>P {calculatedTargets.protein_g}g</span><span>F {calculatedTargets.fat_g}g</span><span>C {calculatedTargets.carbs_g}g</span></div>
+                <button className="action-button secondary-action" type="button" disabled={busy !== null} onClick={handleSaveTargets}>{busy === 'targets' ? <Loader2 className="spin" size={18} /> : <Save size={18} />}目標を保存</button>
+              </div>
             )}
-            {weeklyReview && (
-              <p className="feedback-text">
-                前回 {formatShortDate(weeklyReview.generated_at)}: {weeklyReview.text}
-              </p>
-            )}
-          </div>
-        )}
           </section>
         </TrendView>
       )}
