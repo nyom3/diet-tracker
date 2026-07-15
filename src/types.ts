@@ -112,6 +112,51 @@ export type WeeklyTrend = {
   latest_review: WeeklyReview | null;
 };
 
+export type DashboardRangeDays = 7 | 30 | 90;
+export type DataConfidence = 'low' | 'medium' | 'high';
+
+export type MealCoverage = {
+  logged_main_meal_types: Array<Extract<MealType, '朝' | '昼' | '夜'>>;
+  ratio: number;
+  adequate: boolean;
+};
+
+export type DashboardDay = {
+  date: string;
+  intake: NutritionTotal;
+  meal_count: number;
+  coverage: MealCoverage;
+  weight_kg: number | null;
+  weight_trend_kg: number | null;
+  body_fat_pct: number | null;
+  steps: number | null;
+  expenditure_kcal: number | null;
+  energy_balance_kcal: number | null;
+};
+
+export type DashboardData = {
+  range_days: DashboardRangeDays;
+  window_start: string;
+  window_end: string;
+  goals: NutritionTargets & { target_weight_kg: number | null };
+  confidence: {
+    nutrition: DataConfidence;
+    weight: DataConfidence;
+    activity: DataConfidence;
+  };
+  summary: {
+    logging_days: number;
+    adequate_days: number;
+    recording_coverage_ratio: number;
+    average_intake_kcal: number | null;
+    average_protein_g: number | null;
+    average_steps: number | null;
+    latest_weight_trend_kg: number | null;
+    weight_change_kg: number | null;
+  };
+  days: DashboardDay[];
+};
+
 export type ImagePayload = {
   base64: string;
   mimeType: string;
