@@ -1,25 +1,40 @@
 import type { ImagePayload, InputMode } from './types';
 import { getResizedImageDimensions } from './imageSizing';
+import { withImageDecodeRetry } from './imageRetry';
 
 export const emptyImagePayload: ImagePayload = { base64: '', mimeType: '', widthPx: 0, heightPx: 0 };
 export const imageDecodeErrorMessage =
-  '画像を読み込めませんでした。別の写真を選ぶか、カメラの解像度を下げてお試しください。';
+  '画像を読み込めませんでした。もう一度お試しください。';
 
 const maxImageDimensionPx = 1536;
 const imageJpegQuality = 0.82;
 const maxImageBytes = 1.5 * 1024 * 1024;
+const imageDecodeRetryDelayMs = 400;
 
 type ImageDimensions = {
   widthPx: number;
   heightPx: number;
 };
 
-export async function readSelectedImage(inputMode: InputMode, file: File | null, note: string): Promise<ImagePayload> {
+export type PreparedImage = ImagePayload & {
+  previewUrl: string;
+};
+
+type RenderedImage = {
+  payload: ImagePayload;
+  blob: Blob;
+};
+
+export function readSelectedImage(
+  inputMode: InputMode,
+  preparedImage: PreparedImage | null,
+  note: string,
+): ImagePayload {
   if (inputMode !== 'photo') {
     return emptyImagePayload;
   }
 
-  if (!file) {
+  if (!preparedImage) {
     if (!note.trim()) {
       throw new Error('写真またはメモを入力してください。');
     }
@@ -27,17 +42,33 @@ export async function readSelectedImage(inputMode: InputMode, file: File | null,
     return emptyImagePayload;
   }
 
+  const { previewUrl: _previewUrl, ...payload } = preparedImage;
+  return payload;
+}
+
+export async function prepareSelectedImage(file: File): Promise<PreparedImage> {
   if (!/^image\/(jpeg|png)$/.test(file.type)) {
     throw new Error('JPEGまたはPNGを選択してください。');
   }
 
-  return resizeImageForEstimate(file);
+  const rendered = await resizeImageForEstimate(file);
+  return {
+    ...rendered.payload,
+    previewUrl: URL.createObjectURL(rendered.blob),
+  };
 }
 
 // token予約が実消費を上回るよう、送信前に長辺を上限まで縮小してから実寸でtokenを見積もる
 // (詳細は gas/OpenAiProvider.gs の tryOpenAiVisionEstimate を参照)。
-async function resizeImageForEstimate(file: File): Promise<ImagePayload> {
+async function resizeImageForEstimate(file: File): Promise<RenderedImage> {
   const sourceDimensions = await readImageDimensions(file);
+  return withImageDecodeRetry(
+    () => resizeImageOnce(file, sourceDimensions),
+    imageDecodeRetryDelayMs,
+  );
+}
+
+async function resizeImageOnce(file: File, sourceDimensions: ImageDimensions | null): Promise<RenderedImage> {
   const bitmapOptions = sourceDimensions
     ? getResizeOptions(sourceDimensions)
     : undefined;
@@ -65,7 +96,7 @@ function getResizeOptions(dimensions: ImageDimensions): ImageBitmapOptions {
   };
 }
 
-async function resizeImageWithElement(file: File, sourceDimensions: ImageDimensions | null): Promise<ImagePayload> {
+async function resizeImageWithElement(file: File, sourceDimensions: ImageDimensions | null): Promise<RenderedImage> {
   let loadedImage: HTMLImageElement;
   let objectUrl: string;
 
@@ -102,7 +133,7 @@ function loadImageElement(file: File): Promise<{ image: HTMLImageElement; object
 async function renderImageForEstimate(
   source: CanvasImageSource,
   sourceDimensions: ImageDimensions,
-): Promise<ImagePayload> {
+): Promise<RenderedImage> {
   const { widthPx, heightPx } = getResizedImageDimensions(
     sourceDimensions.widthPx,
     sourceDimensions.heightPx,
@@ -128,7 +159,10 @@ async function renderImageForEstimate(
   }
 
   const base64 = await blobToBase64(blob);
-  return { base64, mimeType: 'image/jpeg', widthPx, heightPx };
+  return {
+    payload: { base64, mimeType: 'image/jpeg', widthPx, heightPx },
+    blob,
+  };
 }
 
 function canvasToJpegBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob> {
