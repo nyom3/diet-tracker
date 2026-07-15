@@ -39,6 +39,12 @@ type HealthRecord = {
   expenditure: number | null;
   weight: number | null;
   bodyFat: number | null;
+  present: {
+    steps: boolean;
+    expenditure: boolean;
+    weight: boolean;
+    bodyFat: boolean;
+  };
 };
 
 type DayAccumulator = {
@@ -235,12 +241,22 @@ function readFoodRecord(row: Row): FoodRecord {
 }
 
 function readHealthRecord(row: Row): HealthRecord {
+  const stepsValue = valueAt(row, 1, 'steps');
+  const expenditureValue = valueAt(row, 2, 'total_calories_kcal');
+  const weightValue = valueAt(row, 3, 'weight_kg');
+  const bodyFatValue = valueAt(row, 4, 'body_fat_pct');
   return {
     date: toDateKey(valueAt(row, 0, 'date')),
-    steps: nonNegativeNumber(valueAt(row, 1, 'steps')),
-    expenditure: nonNegativeNumber(valueAt(row, 2, 'total_calories_kcal')),
-    weight: boundedNumber(valueAt(row, 3, 'weight_kg'), 20, 300),
-    bodyFat: boundedNumber(valueAt(row, 4, 'body_fat_pct'), 0, 100),
+    steps: nonNegativeNumber(stepsValue),
+    expenditure: nonNegativeNumber(expenditureValue),
+    weight: boundedNumber(weightValue, 20, 300),
+    bodyFat: boundedNumber(bodyFatValue, 0, 100),
+    present: {
+      steps: hasExplicitValue(stepsValue),
+      expenditure: hasExplicitValue(expenditureValue),
+      weight: hasExplicitValue(weightValue),
+      bodyFat: hasExplicitValue(bodyFatValue),
+    },
   };
 }
 
@@ -248,7 +264,7 @@ function mergeHealthRecord(
   target: DayAccumulator['health'],
   row: HealthRecord,
 ): void {
-  const fields: Array<keyof Omit<HealthRecord, 'date'>> = [
+  const fields: Array<Exclude<keyof HealthRecord, 'date' | 'present'>> = [
     'steps',
     'expenditure',
     'weight',
@@ -262,20 +278,14 @@ function mergeHealthRecord(
         : field === 'weight'
           ? row.weight
           : row.bodyFat;
-    if (raw !== null || hasExplicitValue(row, field)) {
+    if (row.present[field]) {
       target[field] = raw;
     }
   }
 }
 
-function hasExplicitValue(row: HealthRecord, field: keyof HealthRecord): boolean {
-  return field === 'steps'
-    ? row.steps !== null
-    : field === 'expenditure'
-      ? row.expenditure !== null
-      : field === 'weight'
-        ? row.weight !== null
-        : row.bodyFat !== null;
+function hasExplicitValue(value: unknown): boolean {
+  return value !== '' && value !== null && value !== undefined;
 }
 
 function createMealCoverage(mealTypes: ReadonlySet<string>): MealCoverage {
