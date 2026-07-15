@@ -104,10 +104,6 @@ type QuickUndo = {
   description: string;
 };
 
-function formatWeightKg(weightKg: number | null | undefined): string {
-  return typeof weightKg === 'number' && Number.isFinite(weightKg) ? `${weightKg.toFixed(1)}kg` : '-';
-}
-
 function summarizeAiStatusLine(aiStatus: AiStatus | null): string {
   if (!aiStatus) {
     return 'AI状況を取得中です。';
@@ -1872,19 +1868,6 @@ function formatMealTime(timestamp: string): string {
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
-  }).format(date);
-}
-
-function formatShortDate(value: string): string {
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat('ja-JP', {
-    month: 'numeric',
-    day: 'numeric',
   }).format(date);
 }
 
