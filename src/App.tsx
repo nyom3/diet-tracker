@@ -36,7 +36,7 @@ import {
   summarizeWeeklyFeedback,
   updateMeal,
 } from './gasClient';
-import { readSelectedImage } from './imageProcessing';
+import { prepareSelectedImage, readSelectedImage, type PreparedImage } from './imageProcessing';
 import type {
   AiProviderMode,
   AiStatus,
@@ -99,6 +99,7 @@ const emptyTargets: NutritionTargets = {
 };
 
 type ResourceStatus = 'loading' | 'loaded' | 'error';
+type PhotoStatus = 'idle' | 'processing' | 'ready' | 'error';
 
 type QuickUndo = {
   id: string;
@@ -216,7 +217,9 @@ export function App(): JSX.Element {
   const [inputMode, setInputMode] = React.useState<InputMode>('photo');
   const [estimateMode, setEstimateMode] = React.useState<EstimateMode>('api');
   const [datetime, setDatetime] = React.useState(() => createLocalDatetimeValue());
-  const [photoFile, setPhotoFile] = React.useState<File | null>(null);
+  const [selectedImage, setSelectedImage] = React.useState<PreparedImage | null>(null);
+  const [photoStatus, setPhotoStatus] = React.useState<PhotoStatus>('idle');
+  const [photoError, setPhotoError] = React.useState('');
   const [photoNote, setPhotoNote] = React.useState('');
   const [mealText, setMealText] = React.useState('');
   const [displayName, setDisplayName] = React.useState('');
@@ -250,12 +253,13 @@ export function App(): JSX.Element {
   const [busy, setBusy] = React.useState<
     'estimate' | 'save' | 'quick' | 'favorite' | 'removeFavorite' | 'feedback' | 'targets' | 'weekly' | null
   >(null);
-  const [previewUrl, setPreviewUrl] = React.useState('');
   const [quickUndo, setQuickUndo] = React.useState<QuickUndo | null>(null);
   const draftPausedRef = React.useRef(true);
   const quickUndoTimeoutRef = React.useRef<number | null>(null);
   const settingsButtonRef = React.useRef<HTMLButtonElement | null>(null);
   const hasMountedViewRef = React.useRef(false);
+  const photoInputRef = React.useRef<HTMLInputElement | null>(null);
+  const photoRequestIdRef = React.useRef(0);
 
   const estimationInput = inputMode === 'photo'
     ? photoNote.trim()
@@ -276,17 +280,14 @@ export function App(): JSX.Element {
     Object.values(effectiveTotal).every((value) => Number.isFinite(value) && value >= 0);
 
   React.useEffect(() => {
-    if (!photoFile) {
-      setPreviewUrl('');
+    if (!selectedImage) {
       return undefined;
     }
 
-    const nextUrl = URL.createObjectURL(photoFile);
-    setPreviewUrl(nextUrl);
     return () => {
-      URL.revokeObjectURL(nextUrl);
+      URL.revokeObjectURL(selectedImage.previewUrl);
     };
-  }, [photoFile]);
+  }, [selectedImage]);
 
   React.useEffect(() => {
     void refreshDashboard(false);
@@ -349,6 +350,67 @@ export function App(): JSX.Element {
 
   function markDraftDirty(): void {
     draftPausedRef.current = false;
+  }
+
+  async function preparePhoto(file: File | null): Promise<void> {
+    const requestId = photoRequestIdRef.current + 1;
+    photoRequestIdRef.current = requestId;
+    setSelectedImage(null);
+    setPhotoError('');
+
+    if (!file) {
+      setPhotoStatus('idle');
+      return;
+    }
+
+    setPhotoStatus('processing');
+
+    try {
+      const preparedImage = await prepareSelectedImage(file);
+      if (requestId !== photoRequestIdRef.current) {
+        URL.revokeObjectURL(preparedImage.previewUrl);
+        return;
+      }
+
+      setSelectedImage(preparedImage);
+      setPhotoStatus('ready');
+      if (photoInputRef.current) {
+        photoInputRef.current.value = '';
+      }
+    } catch (error) {
+      if (requestId !== photoRequestIdRef.current) {
+        return;
+      }
+
+      setPhotoStatus('error');
+      setPhotoError(getErrorMessage(error));
+    }
+  }
+
+  function handlePhotoSelection(file: File | null): void {
+    markDraftDirty();
+    void preparePhoto(file);
+  }
+
+  function handlePhotoRetry(): void {
+    const file = photoInputRef.current?.files?.[0] ?? null;
+    if (!file) {
+      setPhotoError('もう一度写真を選択してください。');
+      setPhotoStatus('error');
+      return;
+    }
+
+    void preparePhoto(file);
+  }
+
+  function clearPreparedPhoto(): void {
+    photoRequestIdRef.current += 1;
+    setSelectedImage(null);
+    setPhotoStatus('idle');
+    setPhotoError('');
+    if (photoInputRef.current) {
+      photoInputRef.current.value = '';
+    }
   }
 
   function navigateTo(view: AppView): void {
@@ -445,7 +507,7 @@ export function App(): JSX.Element {
     try {
       setBusy('estimate');
       setStatus({ message: '推定中です。' });
-      const image = await readSelectedImage(inputMode, photoFile, photoNote);
+      const image = readSelectedImage(inputMode, selectedImage, photoNote);
       const result = await estimateCalories(estimationInput, image.base64, image.mimeType, image.widthPx, image.heightPx);
       applyNutrition(result, true);
       setStatus(
@@ -518,7 +580,7 @@ export function App(): JSX.Element {
     setInputMode('photo');
     setEstimateMode('api');
     setDatetime(createLocalDatetimeValue());
-    setPhotoFile(null);
+    clearPreparedPhoto();
     setPhotoNote('');
     setMealText('');
     setDisplayName('');
@@ -658,7 +720,7 @@ export function App(): JSX.Element {
     setInputMode('text');
     setEstimateMode(meal.source === 'manual' ? 'manual' : 'api');
     setDatetime(createLocalDatetimeValue(new Date(meal.timestamp)));
-    setPhotoFile(null);
+    clearPreparedPhoto();
     setPhotoNote('');
     setMealText(meal.description);
     setDisplayName(meal.description);
@@ -1091,24 +1153,42 @@ export function App(): JSX.Element {
 
           {inputMode === 'photo' ? (
             <div className="photo-grid">
-              <label className={`photo-drop ${previewUrl ? 'has-preview' : ''}`}>
-                {previewUrl ? (
-                  <img src={previewUrl} alt="選択した食事" />
-                ) : (
-                  <span>
-                    <Camera size={24} />
-                    写真を選択
-                  </span>
+              <div className="photo-picker">
+                <label className={`photo-drop ${selectedImage ? 'has-preview' : ''}`}>
+                  {selectedImage ? (
+                    <img src={selectedImage.previewUrl} alt="選択した食事" />
+                  ) : photoStatus === 'processing' ? (
+                    <span>
+                      <Loader2 className="spin" size={24} />
+                      画像を準備中
+                    </span>
+                  ) : (
+                    <span>
+                      <Camera size={24} />
+                      写真を選択
+                    </span>
+                  )}
+                  <input
+                    ref={photoInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png"
+                    onChange={(event) => handlePhotoSelection(event.target.files?.[0] || null)}
+                  />
+                </label>
+                {photoError && (
+                  <div className="photo-processing-error" role="alert">
+                    <p>{photoError}</p>
+                    <button
+                      className="retry-button"
+                      type="button"
+                      disabled={photoStatus === 'processing'}
+                      onClick={handlePhotoRetry}
+                    >
+                      もう一度試す
+                    </button>
+                  </div>
                 )}
-                <input
-                  type="file"
-                  accept="image/jpeg,image/png"
-                  onChange={(event) => {
-                    markDraftDirty();
-                    setPhotoFile(event.target.files?.[0] || null);
-                  }}
-                />
-              </label>
+              </div>
               <label className="field">
                 <span>画像の補足・訂正</span>
                 <textarea
@@ -1166,7 +1246,12 @@ export function App(): JSX.Element {
           </div>
 
           {estimateMode === 'api' ? (
-            <button className="action-button secondary-action" type="button" disabled={busy !== null} onClick={handleEstimate}>
+            <button
+              className="action-button secondary-action"
+              type="button"
+              disabled={busy !== null || photoStatus === 'processing'}
+              onClick={handleEstimate}
+            >
               {busy === 'estimate' ? <Loader2 className="spin" size={18} /> : <Sparkles size={18} />}
               推定する
             </button>

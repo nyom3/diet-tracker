@@ -599,6 +599,24 @@ h2 {
   gap: 12px;
 }
 
+.photo-picker {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.photo-processing-error {
+  display: grid;
+  gap: 8px;
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.photo-processing-error p {
+  margin: 0;
+}
+
 .photo-drop {
   position: relative;
   display: grid;
