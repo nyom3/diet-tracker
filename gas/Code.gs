@@ -281,6 +281,41 @@ function getWeeklyTrend() {
   };
 }
 
+function getDashboardData(rangeDays) {
+  const normalizedRangeDays = Number(rangeDays);
+
+  if ([7, 30, 90].indexOf(normalizedRangeDays) === -1) {
+    throw new Error('期間は7、30、90日のいずれかです。');
+  }
+
+  const spreadsheet = getSpreadsheet();
+  const now = new Date();
+  const timezone = Session.getScriptTimeZone();
+  const metricsNow = Utilities.formatDate(now, timezone, "yyyy-MM-dd'T'HH:mm:ssZ");
+  const foodSheet = spreadsheet.getSheetByName(FOOD_LOG_SHEET_NAME);
+  const healthSheet = spreadsheet.getSheetByName(HEALTH_DATA_SHEET_NAME);
+  const targetsSheet = spreadsheet.getSheetByName(TARGETS_SHEET_NAME);
+
+  const foodLogs = foodSheet && foodSheet.getLastRow() >= 2
+    ? foodSheet.getRange(2, 1, foodSheet.getLastRow() - 1, FOOD_LOG_HEADERS.length).getValues()
+    : [];
+  const healthValues = healthSheet && healthSheet.getLastRow() >= 2 && healthSheet.getLastColumn() >= 1
+    ? healthSheet.getRange(1, 1, healthSheet.getLastRow(), healthSheet.getLastColumn()).getValues()
+    : [];
+  const targetValues = targetsSheet && targetsSheet.getLastRow() >= 2
+    ? targetsSheet.getRange(1, 1, targetsSheet.getLastRow(), 2).getValues()
+    : [];
+
+  return buildDashboardData({
+    rangeDays: normalizedRangeDays,
+    now: metricsNow,
+    foodLogs: foodLogs,
+    healthHeaders: healthValues.length > 0 ? healthValues[0] : [],
+    healthRows: healthValues.slice(1),
+    targets: targetValues.slice(1),
+  });
+}
+
 function getLatestWeeklyReview() {
   const sheet = getWeeklyReviewSheet();
   const lastRow = sheet.getLastRow();
