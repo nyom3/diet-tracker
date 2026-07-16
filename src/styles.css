@@ -1514,6 +1514,10 @@ h2 {
   color: var(--danger);
 }
 
+.status.blocked {
+  color: var(--danger);
+}
+
 .spin {
   animation: spin 0.9s linear infinite;
 }
