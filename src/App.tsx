@@ -421,6 +421,10 @@ export function App(): JSX.Element {
     void preparePhoto(file);
   }
 
+  function openPhotoPicker(): void {
+    photoInputRef.current?.click();
+  }
+
   function clearPreparedPhoto(): void {
     photoRequestIdRef.current += 1;
     setSelectedImage(null);
@@ -1185,9 +1189,29 @@ export function App(): JSX.Element {
                     ref={photoInputRef}
                     type="file"
                     accept="image/jpeg,image/png"
+                    capture="environment"
                     onChange={(event) => handlePhotoSelection(event.target.files?.[0] || null)}
                   />
                 </label>
+                <small className="field-hint">JPEG/PNGのみ。送信前に長辺を縮小し、圧縮してから推定します。</small>
+                {selectedImage && (
+                  <div className="photo-actions">
+                    <button className="action-button secondary-action" type="button" onClick={openPhotoPicker}>
+                      <Camera size={18} />
+                      撮り直す
+                    </button>
+                    <button className="action-button secondary-action" type="button" onClick={clearPreparedPhoto}>
+                      <Trash2 size={18} />
+                      写真を外す
+                    </button>
+                  </div>
+                )}
+                {busy === 'estimate' && (
+                  <div className="photo-estimating" role="status" aria-live="polite">
+                    <Loader2 className="spin" size={18} />
+                    写真から推定中です。
+                  </div>
+                )}
                 {photoError && (
                   <div className="photo-processing-error" role="alert">
                     <p>{photoError}</p>
