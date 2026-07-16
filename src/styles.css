@@ -265,6 +265,124 @@ h2 {
   font-size: 24px;
 }
 
+.today-focus-panel,
+.today-primary-cta,
+.today-quick-panel,
+.today-meals-panel,
+.today-feedback-panel {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.today-focus-panel {
+  border-color: rgba(36, 107, 72, 0.24);
+  background: linear-gradient(135deg, rgba(238, 249, 239, 0.96), rgba(255, 255, 255, 0.96));
+}
+
+.today-focus-panel h2,
+.today-primary-cta strong {
+  margin: 0;
+  color: var(--ink);
+  font-size: 20px;
+}
+
+.today-focus-panel p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.6;
+}
+
+.focus-source {
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.today-primary-cta {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border-color: var(--ink);
+  background: var(--surface);
+}
+
+.today-primary-cta strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 16px;
+}
+
+.today-primary-cta .primary-action {
+  min-height: 48px;
+  white-space: nowrap;
+}
+
+.panel.today-quick-panel {
+  padding: 14px;
+}
+
+.panel.today-meals-panel {
+  padding: 14px;
+}
+
+.today-meal-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.today-meal-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding: 8px 0;
+}
+
+.today-meal-list li:last-child {
+  border-bottom: 0;
+}
+
+.today-meal-list span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.today-meal-list strong,
+.today-meal-list em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.today-meal-list strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.today-meal-list em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.meal-edit-button {
+  min-height: 44px;
+  padding: 8px 12px;
+  white-space: nowrap;
+}
+
+.panel.today-feedback-panel {
+  padding: 0;
+}
+
 .today-panel h2 {
   display: grid;
   gap: 3px;
@@ -1723,6 +1841,14 @@ h2 {
 
   .weekly-heading-row {
     grid-template-columns: 1fr;
+  }
+
+  .today-primary-cta {
+    grid-template-columns: 1fr;
+  }
+
+  .today-primary-cta .primary-action {
+    width: 100%;
   }
 
   .mode-switch {
