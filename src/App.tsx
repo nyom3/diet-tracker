@@ -1061,7 +1061,7 @@ export function App(): JSX.Element {
               </button>
             </div>
           )}
-          <section className="panel today-panel">
+          <section className="panel today-panel today-summary-panel">
         <PanelStatusNote
           status={summaryStatus}
           hasData={todaySummary !== null}
@@ -1116,7 +1116,7 @@ export function App(): JSX.Element {
 
       {currentView === 'record' && (
         <RecordView>
-          <form className="meal-form" onSubmit={handleSave}>
+          <form className="meal-form record-form" onSubmit={handleSave}>
         {selectedMealId && (
           <div className="edit-banner">
             <span>記録を編集中</span>
@@ -1126,7 +1126,7 @@ export function App(): JSX.Element {
             </button>
           </div>
         )}
-        <section className="panel compact-panel">
+        <section className="panel compact-panel record-context-panel">
           <SegmentedGroup label="食事タイプ">
             {mealTypes.map((value) => (
               <SegmentedButton key={value} active={mealType === value} onClick={() => {
@@ -1146,7 +1146,7 @@ export function App(): JSX.Element {
           </label>
         </section>
 
-        <section className="panel input-panel">
+        <section className="panel input-panel record-input-panel">
           <div className="section-heading">
             <div>
               <span className="section-label">入力</span>
@@ -1266,7 +1266,7 @@ export function App(): JSX.Element {
           </label>
         </section>
 
-        <section className="panel">
+        <section className="panel record-estimate-panel">
           <div className="section-heading">
             <div>
               <span className="section-label">推定</span>
@@ -1318,7 +1318,7 @@ export function App(): JSX.Element {
           )}
         </section>
 
-        <section className="result-panel">
+        <section className="result-panel record-result-panel">
           <div className="calorie-card">
             <span>推定結果</span>
             <strong>{Math.round(effectiveTotal.calories_kcal || 0)}</strong>
@@ -1372,7 +1372,7 @@ export function App(): JSX.Element {
         </section>
 
         {items.length > 0 && (
-          <section className="panel">
+          <section className="panel record-breakdown-panel">
             <div className="section-heading">
               <div>
                 <span className="section-label">内訳</span>
@@ -1431,7 +1431,7 @@ export function App(): JSX.Element {
           </section>
         )}
 
-        <div className="sticky-actions">
+        <div className="sticky-actions record-sticky-actions">
           <p className={`status ${saveBlockedReason ? 'blocked' : status.type || ''}`} aria-live="polite">
             {saveBlockedReason || status.message || ''}
           </p>
@@ -1459,7 +1459,7 @@ export function App(): JSX.Element {
         </div>
       )}
 
-      <section className="panel recent-panel">
+      <section className="panel recent-panel auxiliary-panel quick-panel">
         <div className="section-heading">
           <div>
             <span className="section-label">履歴</span>
@@ -1530,7 +1530,7 @@ export function App(): JSX.Element {
         )}
       </section>
 
-      <section className="panel favorite-panel">
+      <section className="panel favorite-panel auxiliary-panel quick-panel">
         <div className="section-heading">
           <div>
             <span className="section-label">定番</span>
