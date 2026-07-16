@@ -1,15 +1,23 @@
 import type {
   AiProviderMode,
   AiStatus,
+  CoachAction,
+  CoachActionCandidate,
+  CoachActionCategory,
+  CoachInsight,
   DailyFeedback,
   DashboardData,
   DashboardRangeDays,
   DataConfidence,
   FavoriteMeal,
   FavoriteMealPayload,
+  HealthGoals,
+  HomeSnapshot,
+  MealType,
   NutritionResult,
   NutritionTargets,
   SavedMeal,
+  SaveGoalsPayload,
   SaveMealPayload,
   SaveTargetsPayload,
   TodaySummary,
@@ -56,6 +64,9 @@ type GoogleScriptRun = {
   getAiStatus: () => void;
   setAiProviderMode: (mode: AiProviderMode) => void;
   confirmOpenAiEligibility: (action: 'confirm' | 'pause') => void;
+  getGoals: () => void;
+  saveGoals: (payload: SaveGoalsPayload) => void;
+  getHomeSnapshot: () => void;
 };
 
 export function estimateCalories(
@@ -131,6 +142,27 @@ export function saveTargets(payload: SaveTargetsPayload): Promise<{ ok: boolean;
     ...result,
     targets: normalizeTargets(result.targets),
   }));
+}
+
+export function getGoals(): Promise<HealthGoals> {
+  return callGas<Partial<HealthGoals>>((runner) => {
+    runner.getGoals();
+  }).then(normalizeHealthGoals);
+}
+
+export function saveGoals(payload: SaveGoalsPayload): Promise<{ ok: true; goals: HealthGoals }> {
+  return callGas<{ ok: true; goals: Partial<HealthGoals> }>((runner) => {
+    runner.saveGoals(payload);
+  }).then((result) => ({
+    ...result,
+    goals: normalizeHealthGoals(result.goals),
+  }));
+}
+
+export function getHomeSnapshot(): Promise<HomeSnapshot> {
+  return callGas<Partial<HomeSnapshot>>((runner) => {
+    runner.getHomeSnapshot();
+  }).then(normalizeHomeSnapshot);
 }
 
 export function getWeeklyTrend(): Promise<WeeklyTrend> {
@@ -209,6 +241,173 @@ function normalizeTargets(targets: Partial<NutritionTargets> | null | undefined)
     fat_g: normalizeNullableNumber(targets?.fat_g),
     carbs_g: normalizeNullableNumber(targets?.carbs_g),
   };
+}
+
+function normalizeHealthGoals(goals: Partial<HealthGoals> | null | undefined): HealthGoals {
+  return {
+    calories_kcal: normalizeNullableNonNegativeNumber(goals?.calories_kcal),
+    protein_g: normalizeNullableNonNegativeNumber(goals?.protein_g),
+    fat_g: normalizeNullableNonNegativeNumber(goals?.fat_g),
+    carbs_g: normalizeNullableNonNegativeNumber(goals?.carbs_g),
+    target_weight_kg: normalizeNullableBoundedNumber(goals?.target_weight_kg, 20, 300),
+  };
+}
+
+export function normalizeHomeSnapshot(snapshot: Partial<HomeSnapshot> | null | undefined): HomeSnapshot {
+  const raw = asRecord(snapshot);
+  const date = normalizeDateKey(raw.date) || '1970-01-01';
+  const today = normalizeTodaySummary(raw.today, date);
+
+  return {
+    date,
+    today,
+    goals: normalizeHealthGoals(asRecord(raw.goals) as Partial<HealthGoals>),
+    today_meals: normalizeSavedMeals(raw.today_meals),
+    recent_meals: normalizeSavedMeals(raw.recent_meals),
+    favorites: normalizeFavoriteMeals(raw.favorites),
+    active_action: normalizeCoachAction(raw.active_action),
+    rule_focus: normalizeCoachInsight(raw.rule_focus, date),
+  };
+}
+
+function normalizeTodaySummary(value: unknown, fallbackDate: string): TodaySummary {
+  const summary = asRecord(value);
+  const total = asRecord(summary.total);
+
+  return {
+    date: normalizeDateKey(summary.date) || fallbackDate,
+    count: normalizeNonNegativeInteger(summary.count),
+    total: {
+      calories_kcal: normalizeNonNegativeNumber(total.calories_kcal),
+      protein_g: normalizeNonNegativeNumber(total.protein_g),
+      fat_g: normalizeNonNegativeNumber(total.fat_g),
+      carbs_g: normalizeNonNegativeNumber(total.carbs_g),
+    },
+  };
+}
+
+function normalizeSavedMeals(value: unknown): SavedMeal[] {
+  return Array.isArray(value) ? value.map(normalizeSavedMeal) : [];
+}
+
+function normalizeSavedMeal(value: unknown): SavedMeal {
+  const meal = asRecord(value);
+  return {
+    id: normalizeString(meal.id),
+    timestamp: normalizeString(meal.timestamp),
+    meal_type: normalizeMealType(meal.meal_type),
+    description: normalizeString(meal.description),
+    calories_kcal: normalizeNonNegativeNumber(meal.calories_kcal),
+    protein_g: normalizeNonNegativeNumber(meal.protein_g),
+    fat_g: normalizeNonNegativeNumber(meal.fat_g),
+    carbs_g: normalizeNonNegativeNumber(meal.carbs_g),
+    source: meal.source === 'api' ? 'api' : 'manual',
+    breakdown_json: normalizeString(meal.breakdown_json),
+  };
+}
+
+function normalizeFavoriteMeals(value: unknown): FavoriteMeal[] {
+  return Array.isArray(value) ? value.map(normalizeFavoriteMeal) : [];
+}
+
+function normalizeFavoriteMeal(value: unknown): FavoriteMeal {
+  const favorite = asRecord(value);
+  return {
+    id: normalizeString(favorite.id),
+    description: normalizeString(favorite.description),
+    calories_kcal: normalizeNonNegativeNumber(favorite.calories_kcal),
+    protein_g: normalizeNonNegativeNumber(favorite.protein_g),
+    fat_g: normalizeNonNegativeNumber(favorite.fat_g),
+    carbs_g: normalizeNonNegativeNumber(favorite.carbs_g),
+    breakdown_json: normalizeString(favorite.breakdown_json),
+    created_at: normalizeString(favorite.created_at),
+  };
+}
+
+function normalizeCoachInsight(value: unknown, fallbackDate: string): CoachInsight {
+  const insight = asRecord(value);
+  const rawEvidence = Array.isArray(insight.evidence) ? insight.evidence : [];
+
+  return {
+    generated_at: normalizeString(insight.generated_at),
+    scope: insight.scope === 'trend' ? 'trend' : 'today',
+    source: insight.source === 'ai' ? 'ai' : 'rules',
+    headline: normalizeString(insight.headline),
+    summary: normalizeString(insight.summary),
+    confidence: normalizeConfidence(insight.confidence),
+    evidence: rawEvidence.map((item) => normalizeCoachEvidence(item, fallbackDate)),
+    selected_action: normalizeCoachActionCandidate(insight.selected_action, fallbackDate),
+    alternative_action: normalizeCoachActionCandidate(insight.alternative_action, fallbackDate),
+    fallback_notice: typeof insight.fallback_notice === 'string' ? insight.fallback_notice : undefined,
+  };
+}
+
+function normalizeCoachEvidence(value: unknown, fallbackDate: string): CoachInsight['evidence'][number] {
+  const evidence = asRecord(value);
+  const units = ['kcal', 'g', 'kg', 'steps', '%', 'days'] as const;
+  const unit = units.includes(evidence.unit as typeof units[number])
+    ? evidence.unit as typeof units[number]
+    : 'days';
+
+  return {
+    key: normalizeString(evidence.key),
+    label: normalizeString(evidence.label),
+    value: normalizeNonNegativeNumber(evidence.value),
+    unit,
+    comparison_value: normalizeNullableNumber(evidence.comparison_value),
+    comparison_label: typeof evidence.comparison_label === 'string' ? evidence.comparison_label : null,
+    period_start: normalizeDateKey(evidence.period_start) || fallbackDate,
+    period_end: normalizeDateKey(evidence.period_end) || fallbackDate,
+    confidence: normalizeConfidence(evidence.confidence),
+  };
+}
+
+function normalizeCoachActionCandidate(value: unknown, fallbackDate: string): CoachActionCandidate | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const action = asRecord(value);
+  const categories = ['logging', 'energy', 'protein', 'macro_balance', 'activity'] as const;
+  const category = categories.includes(action.category as CoachActionCategory)
+    ? action.category as CoachActionCategory
+    : 'logging';
+
+  return {
+    key: normalizeString(action.key),
+    category,
+    text: normalizeString(action.text),
+    target_date: normalizeDateKey(action.target_date) || fallbackDate,
+  };
+}
+
+function normalizeCoachAction(value: unknown): CoachAction | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const action = asRecord(value);
+  const candidate = normalizeCoachActionCandidate(action, '1970-01-01');
+  const statuses = ['planned', 'completed', 'dismissed', 'expired'] as const;
+  const status = statuses.includes(action.status as typeof statuses[number])
+    ? action.status as typeof statuses[number]
+    : 'planned';
+
+  return {
+    ...(candidate || { key: '', category: 'logging', text: '', target_date: '1970-01-01' }),
+    id: normalizeString(action.id),
+    created_at: normalizeString(action.created_at),
+    status,
+    completed_at: typeof action.completed_at === 'string' ? action.completed_at : null,
+  };
+}
+
+function normalizeString(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+function normalizeMealType(value: unknown): MealType {
+  return value === '朝' || value === '昼' || value === '夜' || value === '間食' ? value : '間食';
 }
 
 function normalizeWeeklyTrend(trend: WeeklyTrend): WeeklyTrend {

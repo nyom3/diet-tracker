@@ -26,6 +26,12 @@ export type NutritionTargets = {
   carbs_g: number | null;
 };
 
+export type HealthGoals = NutritionTargets & {
+  target_weight_kg: number | null;
+};
+
+export type SaveGoalsPayload = HealthGoals;
+
 export type SaveTargetsPayload = {
   calories_kcal: number;
   protein_g: number;
@@ -138,7 +144,7 @@ export type DashboardData = {
   range_days: DashboardRangeDays;
   window_start: string;
   window_end: string;
-  goals: NutritionTargets & { target_weight_kg: number | null };
+  goals: HealthGoals;
   confidence: {
     nutrition: DataConfidence;
     weight: DataConfidence;
@@ -155,6 +161,60 @@ export type DashboardData = {
     weight_change_kg: number | null;
   };
   days: DashboardDay[];
+};
+
+export type CoachScope = 'today' | 'trend';
+export type CoachActionStatus = 'planned' | 'completed' | 'dismissed' | 'expired';
+export type CoachActionCategory = 'logging' | 'energy' | 'protein' | 'macro_balance' | 'activity';
+
+export type CoachEvidence = {
+  key: string;
+  label: string;
+  value: number;
+  unit: 'kcal' | 'g' | 'kg' | 'steps' | '%' | 'days';
+  comparison_value: number | null;
+  comparison_label: string | null;
+  period_start: string;
+  period_end: string;
+  confidence: DataConfidence;
+};
+
+export type CoachActionCandidate = {
+  key: string;
+  category: CoachActionCategory;
+  text: string;
+  target_date: string;
+};
+
+export type CoachInsight = {
+  generated_at: string;
+  scope: CoachScope;
+  source: 'ai' | 'rules';
+  headline: string;
+  summary: string;
+  confidence: DataConfidence;
+  evidence: CoachEvidence[];
+  selected_action: CoachActionCandidate | null;
+  alternative_action: CoachActionCandidate | null;
+  fallback_notice?: string;
+};
+
+export type CoachAction = CoachActionCandidate & {
+  id: string;
+  created_at: string;
+  status: CoachActionStatus;
+  completed_at: string | null;
+};
+
+export type HomeSnapshot = {
+  date: string;
+  today: TodaySummary;
+  goals: HealthGoals;
+  today_meals: SavedMeal[];
+  recent_meals: SavedMeal[];
+  favorites: FavoriteMeal[];
+  active_action: CoachAction | null;
+  rule_focus: CoachInsight;
 };
 
 export type ImagePayload = {
