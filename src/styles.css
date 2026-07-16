@@ -254,6 +254,17 @@ h2 {
   margin-bottom: 12px;
 }
 
+.today-panel.today-summary-panel {
+  border-color: var(--line);
+  background: var(--surface-soft);
+  box-shadow: none;
+  padding: 12px;
+}
+
+.today-panel.today-summary-panel h2 {
+  font-size: 24px;
+}
+
 .today-panel h2 {
   display: grid;
   gap: 3px;
@@ -306,6 +317,64 @@ h2 {
   padding: 16px;
 }
 
+.record-form {
+  gap: 14px;
+}
+
+.record-form .panel,
+.record-form .result-panel {
+  box-shadow: 0 6px 18px rgba(23, 38, 29, 0.06);
+}
+
+.record-form .record-input-panel {
+  border-color: var(--line-strong);
+  box-shadow: 0 14px 34px rgba(23, 38, 29, 0.1);
+  padding: 18px;
+}
+
+.record-input-panel h2,
+.record-estimate-panel h2 {
+  font-size: 20px;
+}
+
+.record-form .record-result-panel {
+  border: 2px solid var(--ink);
+  box-shadow: 0 16px 34px rgba(23, 38, 29, 0.14);
+  padding: 14px;
+}
+
+.record-form .record-sticky-actions {
+  border-top: 2px solid var(--ink);
+  background: var(--surface);
+  box-shadow: 0 -8px 24px rgba(23, 38, 29, 0.1);
+}
+
+.record-sticky-actions .primary-action {
+  min-height: 54px;
+  box-shadow: 0 8px 18px rgba(36, 107, 72, 0.3);
+}
+
+.auxiliary-panel,
+.quick-panel {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  padding: 8px 0;
+}
+
+.quick-panel .section-heading {
+  margin-bottom: 8px;
+}
+
+.quick-panel .section-heading h2 {
+  font-size: 16px;
+}
+
+.quick-panel .recent-list,
+.quick-panel .favorite-info {
+  font-size: 13px;
+}
+
 .compact-panel {
   display: grid;
   grid-template-columns: 1fr;
@@ -318,6 +387,11 @@ h2 {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 14px;
+}
+
+.record-form .section-label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
 }
 
 .collapsible-panel {
@@ -1540,6 +1614,17 @@ h2 {
 
 .spin {
   animation: spin 0.9s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 @keyframes spin {
