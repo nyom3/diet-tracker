@@ -319,11 +319,11 @@ h2 {
   white-space: nowrap;
 }
 
-.today-quick-panel {
+.panel.today-quick-panel {
   padding: 14px;
 }
 
-.today-meals-panel {
+.panel.today-meals-panel {
   padding: 14px;
 }
 
@@ -379,7 +379,7 @@ h2 {
   white-space: nowrap;
 }
 
-.today-feedback-panel {
+.panel.today-feedback-panel {
   padding: 0;
 }
 
