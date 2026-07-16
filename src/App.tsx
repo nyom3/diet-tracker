@@ -64,6 +64,7 @@ import { persistAppView, readInitialAppView, type AppView } from './navigation';
 import { RecordView } from './views/RecordView';
 import { TodayView } from './views/TodayView';
 import { TrendView } from './views/TrendView';
+import { getSaveBlockedReason } from './saveReason';
 
 const mealTypes: MealType[] = ['朝', '昼', '夜', '間食'];
 const recentMealsPreviewCount = 3;
@@ -269,9 +270,26 @@ export function App(): JSX.Element {
   const hasTargets = hasCompleteTargets(targets);
   const canSave =
     !busy &&
-    Boolean(savedDescription) &&
-    hasNutrition &&
-    Object.values(effectiveTotal).every((value) => Number.isFinite(value) && value >= 0);
+    getSaveBlockedReason({
+      inputMode,
+      hasPhoto: selectedImage !== null,
+      estimationInput,
+      estimateMode,
+      hasNutrition,
+      description: savedDescription,
+      total: effectiveTotal,
+    }) === null;
+  const saveBlockedReason = busy === null
+    ? getSaveBlockedReason({
+      inputMode,
+      hasPhoto: selectedImage !== null,
+      estimationInput,
+      estimateMode,
+      hasNutrition,
+      description: savedDescription,
+      total: effectiveTotal,
+    })
+    : null;
 
   React.useEffect(() => {
     if (!selectedImage) {
@@ -1390,7 +1408,9 @@ export function App(): JSX.Element {
         )}
 
         <div className="sticky-actions">
-          <p className={`status ${status.type || ''}`} aria-live="polite">{status.message}</p>
+          <p className={`status ${status.type || ''}`} aria-live="polite">
+            {status.message || saveBlockedReason || ''}
+          </p>
           <button className="action-button secondary-action record-back-action" type="button" onClick={() => navigateTo('today')}>
             今日へ戻る
           </button>
