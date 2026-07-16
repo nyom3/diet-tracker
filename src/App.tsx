@@ -24,13 +24,14 @@ import {
   estimateCalories,
   getAiStatus,
   getDashboardData,
-  getTargets,
+  getGoals,
+  getHomeSnapshot,
   getTodaySummary,
   listFavorites,
   listRecentMeals,
   processInput,
   removeFavorite,
-  saveTargets,
+  saveGoals,
   setAiProviderMode,
   summarizeTodayFeedback,
   updateMeal,
@@ -45,6 +46,8 @@ import type {
   EstimateMode,
   FavoriteMeal,
   FavoriteMealPayload,
+  HealthGoals,
+  HomeSnapshot,
   InputMode,
   MealType,
   NutritionItem,
@@ -54,7 +57,6 @@ import type {
   NutritionTotal,
   SavedMeal,
   SaveMealPayload,
-  SaveTargetsPayload,
   TodaySummary,
 } from './types';
 import { AppHeader } from './components/AppHeader';
@@ -229,6 +231,8 @@ export function App(): JSX.Element {
   const [todaySummary, setTodaySummary] = React.useState<TodaySummary | null>(null);
   const [targets, setTargets] = React.useState<NutritionTargets>(emptyTargets);
   const [targetCaloriesInput, setTargetCaloriesInput] = React.useState('');
+  const [targetWeightInput, setTargetWeightInput] = React.useState('');
+  const [homeSnapshot, setHomeSnapshot] = React.useState<HomeSnapshot | null>(null);
   const [isTargetPanelOpen, setIsTargetPanelOpen] = React.useState(() => readBooleanStorage(targetPanelStorageKey, false));
   const [pfcRatio, setPfcRatio] = React.useState(defaultPfcRatio);
   const [dashboardRange, setDashboardRange] = React.useState<DashboardRangeDays>(30);
@@ -239,6 +243,7 @@ export function App(): JSX.Element {
   const [favoritesStatus, setFavoritesStatus] = React.useState<ResourceStatus>('loading');
   const [summaryStatus, setSummaryStatus] = React.useState<ResourceStatus>('loading');
   const [targetsStatus, setTargetsStatus] = React.useState<ResourceStatus>('loading');
+  const [homeSnapshotStatus, setHomeSnapshotStatus] = React.useState<ResourceStatus>('loading');
   const [dashboardStatus, setDashboardStatus] = React.useState<ResourceStatus>('loading');
   const [aiStatus, setAiStatus] = React.useState<AiStatus | null>(null);
   const [isAiPanelOpen, setIsAiPanelOpen] = React.useState(() => readBooleanStorage(aiPanelStorageKey, false));
@@ -255,6 +260,8 @@ export function App(): JSX.Element {
   const photoInputRef = React.useRef<HTMLInputElement | null>(null);
   const photoRequestIdRef = React.useRef(0);
   const dashboardRequestIdRef = React.useRef(0);
+  const homeSnapshotRequestIdRef = React.useRef(0);
+  const initialHomeSnapshotRequestedRef = React.useRef(false);
 
   const estimationInput = inputMode === 'photo'
     ? photoNote.trim()
@@ -267,7 +274,9 @@ export function App(): JSX.Element {
     : recentMeals.slice(0, recentMealsPreviewCount);
   const hiddenRecentMealsCount = Math.max(0, recentMeals.length - recentMealsPreviewCount);
   const calculatedTargets = calculateTargetsFromRatio(targetCaloriesInput, pfcRatio);
-  const hasTargets = hasCompleteTargets(targets);
+  const homeToday = homeSnapshot?.today ?? todaySummary;
+  const homeGoals = homeSnapshot?.goals ?? targets;
+  const hasTargets = hasCompleteTargets(homeGoals);
   const canSave =
     !busy &&
     getSaveBlockedReason({
@@ -308,7 +317,11 @@ export function App(): JSX.Element {
   }, [currentView, dashboardRange]);
 
   React.useEffect(() => {
-    void refreshDashboard(false);
+    if (initialHomeSnapshotRequestedRef.current) {
+      return;
+    }
+    initialHomeSnapshotRequestedRef.current = true;
+    void loadHomeSnapshot();
   }, []);
 
   React.useEffect(() => {
@@ -578,7 +591,7 @@ export function App(): JSX.Element {
       clearMealDraft();
       resetForm();
       invalidateDashboardCache();
-      await refreshDashboard(false);
+      await loadHomeSnapshot(true);
       setStatus({ message: selectedMealId ? '更新しました。' : '保存しました。', type: 'success' });
       navigateTo('today');
     } catch (error) {
@@ -678,15 +691,59 @@ export function App(): JSX.Element {
   async function loadTargets(): Promise<boolean> {
     setTargetsStatus('loading');
     try {
-      const nextTargets = await getTargets();
-      setTargets(nextTargets);
-      setTargetCaloriesInput(nextTargets.calories_kcal === null ? '' : String(Math.round(nextTargets.calories_kcal)));
-      setPfcRatio(derivePfcRatio(nextTargets));
+      const nextGoals = await getGoals();
+      setTargets(nextGoals);
+      setTargetCaloriesInput(nextGoals.calories_kcal === null ? '' : String(Math.round(nextGoals.calories_kcal)));
+      setTargetWeightInput(nextGoals.target_weight_kg === null ? '' : String(nextGoals.target_weight_kg));
+      setPfcRatio(derivePfcRatio(nextGoals));
       setTargetsStatus('loaded');
       return true;
     } catch (error) {
       console.warn('目標の読み込みに失敗しました:', error);
       setTargetsStatus('error');
+      return false;
+    }
+  }
+
+  async function loadHomeSnapshot(force = false): Promise<boolean> {
+    if (!force && homeSnapshotStatus === 'loaded' && homeSnapshot) {
+      return true;
+    }
+
+    const requestId = homeSnapshotRequestIdRef.current + 1;
+    homeSnapshotRequestIdRef.current = requestId;
+    setHomeSnapshotStatus('loading');
+
+    try {
+      const snapshot = await getHomeSnapshot();
+      if (homeSnapshotRequestIdRef.current !== requestId) {
+        return false;
+      }
+
+      setHomeSnapshot(snapshot);
+      setTodaySummary(snapshot.today);
+      setTargets(snapshot.goals);
+      setRecentMeals(snapshot.recent_meals);
+      setFavorites(snapshot.favorites);
+      setTargetCaloriesInput(snapshot.goals.calories_kcal === null ? '' : String(Math.round(snapshot.goals.calories_kcal)));
+      setTargetWeightInput(snapshot.goals.target_weight_kg === null ? '' : String(snapshot.goals.target_weight_kg));
+      setPfcRatio(derivePfcRatio(snapshot.goals));
+      setRecentStatus('loaded');
+      setFavoritesStatus('loaded');
+      setSummaryStatus('loaded');
+      setTargetsStatus('loaded');
+      setHomeSnapshotStatus('loaded');
+      return true;
+    } catch (error) {
+      if (homeSnapshotRequestIdRef.current !== requestId) {
+        return false;
+      }
+      console.warn('今日画面の読み込みに失敗しました:', error);
+      setHomeSnapshotStatus('error');
+      setSummaryStatus('error');
+      setTargetsStatus('error');
+      setRecentStatus('error');
+      setFavoritesStatus('error');
       return false;
     }
   }
@@ -789,7 +846,7 @@ export function App(): JSX.Element {
       setStatus({ message: 'クイック登録中です。' });
       const result = await processInput(buildQuickPayload(meal));
       invalidateDashboardCache();
-      await refreshDashboard(false);
+      await loadHomeSnapshot(true);
       showQuickUndo(result.id, meal.description);
       setStatus({ message: 'クイック登録しました。', type: 'success' });
       navigateTo('today');
@@ -806,7 +863,7 @@ export function App(): JSX.Element {
       setStatus({ message: 'お気に入りを登録中です。' });
       const result = await processInput(buildQuickPayload(favorite));
       invalidateDashboardCache();
-      await refreshDashboard(false);
+      await loadHomeSnapshot(true);
       showQuickUndo(result.id, favorite.description);
       setStatus({ message: 'お気に入りから登録しました。', type: 'success' });
       navigateTo('today');
@@ -835,7 +892,7 @@ export function App(): JSX.Element {
       setStatus({ message: '取り消し中です。' });
       await deleteMeal(id);
       invalidateDashboardCache();
-      await refreshDashboard(false);
+      await loadHomeSnapshot(true);
       setStatus({ message: `${description}の登録を取り消しました。`, type: 'success' });
     } catch (error) {
       setStatus({ message: getErrorMessage(error), type: 'error' });
@@ -849,7 +906,7 @@ export function App(): JSX.Element {
       setBusy('favorite');
       setStatus({ message: 'お気に入りに追加中です。' });
       await addFavorite(buildFavoritePayload(meal));
-      await refreshDashboard(false);
+      await loadHomeSnapshot(true);
       setStatus({ message: 'お気に入りに追加しました。', type: 'success' });
     } catch (error) {
       setStatus({ message: getErrorMessage(error), type: 'error' });
@@ -863,7 +920,7 @@ export function App(): JSX.Element {
       setBusy('removeFavorite');
       setStatus({ message: 'お気に入りを削除中です。' });
       await removeFavorite(favorite.id);
-      setFavorites((current) => current.filter((item) => item.id !== favorite.id));
+      await loadHomeSnapshot(true);
       setStatus({ message: 'お気に入りを削除しました。', type: 'success' });
     } catch (error) {
       setStatus({ message: getErrorMessage(error), type: 'error' });
@@ -883,6 +940,14 @@ export function App(): JSX.Element {
         count: feedback.count,
         total: feedback.total,
       });
+      setHomeSnapshot((current) => current ? {
+        ...current,
+        today: {
+          date: feedback.date,
+          count: feedback.count,
+          total: feedback.total,
+        },
+      } : current);
       setStatus(
         feedback.fallback_notice
           ? { message: `コメントを取得しました。${feedback.fallback_notice}`, type: 'error' }
@@ -898,13 +963,14 @@ export function App(): JSX.Element {
 
   async function handleSaveTargets(): Promise<void> {
     try {
-      const payload = buildTargetsPayload(calculatedTargets);
+      const payload = buildGoalsPayload(calculatedTargets, targetWeightInput);
       setBusy('targets');
       setStatus({ message: '目標を保存中です。' });
-      const result = await saveTargets(payload);
-      setTargets(result.targets);
+      const result = await saveGoals(payload);
+      setTargets(result.goals);
+      setTargetWeightInput(result.goals.target_weight_kg === null ? '' : String(result.goals.target_weight_kg));
       invalidateDashboardCache();
-      await refreshDashboard(false);
+      await loadHomeSnapshot(true);
       setStatus({ message: '目標を保存しました。', type: 'success' });
     } catch (error) {
       setStatus({ message: getErrorMessage(error), type: 'error' });
@@ -1061,55 +1127,171 @@ export function App(): JSX.Element {
               </button>
             </div>
           )}
+          <section className="panel today-focus-panel">
+            <PanelStatusNote
+              status={homeSnapshotStatus}
+              hasData={homeSnapshot !== null}
+              loadingText="今日の画面を読み込み中です。"
+              errorText="今日の画面を読み込めませんでした。記録は下のボタンから続けられます。"
+              onRetry={() => void loadHomeSnapshot(true)}
+            />
+            <span className="section-label">今日のフォーカス</span>
+            <h2>{homeSnapshot?.active_action?.text || homeSnapshot?.rule_focus.headline || 'まずは食事を1件記録する'}</h2>
+            <p>{homeSnapshot?.active_action ? '選択中のアクションです。' : homeSnapshot?.rule_focus.summary || '食事を記録すると、今日の進み具合を確認できます。'}</p>
+            {homeSnapshot?.rule_focus.source === 'rules' && <small className="focus-source">ルールベースの案内</small>}
+          </section>
+
           <section className="panel today-panel today-summary-panel">
-        <PanelStatusNote
-          status={summaryStatus}
-          hasData={todaySummary !== null}
-          loadingText="今日の記録を読み込み中です。"
-          errorText="今日の記録を読み込めませんでした。"
-          onRetry={() => void loadSummary()}
-        />
-        <PanelStatusNote
-          status={targetsStatus}
-          hasData={hasTargets}
-          loadingText="目標を読み込み中です。"
-          errorText="目標を読み込めませんでした。"
-          onRetry={() => void loadTargets()}
-        />
-        <div>
-          <span className="section-label">今日</span>
-          <h2>
-            <span className={isOverTarget(todaySummary?.total.calories_kcal || 0, targets.calories_kcal) ? 'over' : ''}>
-              {formatTargetProgress(todaySummary?.total.calories_kcal || 0, targets.calories_kcal, 'kcal')}
-            </span>
-            <small>
-              <span className={isOverTarget(todaySummary?.total.protein_g || 0, targets.protein_g) ? 'over' : ''}>
-                P{formatTargetProgress(todaySummary?.total.protein_g || 0, targets.protein_g, 'g')}
-              </span>
-              <span className={isOverTarget(todaySummary?.total.fat_g || 0, targets.fat_g) ? 'over' : ''}>
-                F{formatTargetProgress(todaySummary?.total.fat_g || 0, targets.fat_g, 'g')}
-              </span>
-              <span className={isOverTarget(todaySummary?.total.carbs_g || 0, targets.carbs_g) ? 'over' : ''}>
-                C{formatTargetProgress(todaySummary?.total.carbs_g || 0, targets.carbs_g, 'g')}
-              </span>
-            </small>
-          </h2>
-          {!hasTargets && targetsStatus === 'loaded' && (
-            <p className="target-empty-note">目標を設定すると残り/超過を表示します。</p>
-          )}
-        </div>
-        <button
-          className="action-button secondary-action feedback-action"
-          type="button"
-          disabled={busy !== null || !todaySummary?.count}
-          onClick={handleDailyFeedback}
-        >
-          {busy === 'feedback' ? <Loader2 className="spin" size={18} /> : <MessageCircle size={18} />}
-          コメント
-        </button>
-        {dailyFeedback && (
-          <p className="feedback-text">{dailyFeedback.feedback}</p>
-        )}
+            <PanelStatusNote
+              status={summaryStatus}
+              hasData={homeToday !== null}
+              loadingText="今日の記録を読み込み中です。"
+              errorText="今日の記録を読み込めませんでした。"
+              onRetry={() => void loadHomeSnapshot(true)}
+            />
+            <PanelStatusNote
+              status={targetsStatus}
+              hasData={hasTargets}
+              loadingText="目標を読み込み中です。"
+              errorText="目標を読み込めませんでした。"
+              onRetry={() => void loadHomeSnapshot(true)}
+            />
+            <div>
+              <span className="section-label">今日の進捗</span>
+              <h2>
+                <span className={isOverTarget(homeToday?.total.calories_kcal || 0, homeGoals.calories_kcal) ? 'over' : ''}>
+                  {formatTargetProgress(homeToday?.total.calories_kcal || 0, homeGoals.calories_kcal, 'kcal')}
+                </span>
+                <small>
+                  <span className={isOverTarget(homeToday?.total.protein_g || 0, homeGoals.protein_g) ? 'over' : ''}>
+                    P{formatTargetProgress(homeToday?.total.protein_g || 0, homeGoals.protein_g, 'g')}
+                  </span>
+                  <span className={isOverTarget(homeToday?.total.fat_g || 0, homeGoals.fat_g) ? 'over' : ''}>
+                    F{formatTargetProgress(homeToday?.total.fat_g || 0, homeGoals.fat_g, 'g')}
+                  </span>
+                  <span className={isOverTarget(homeToday?.total.carbs_g || 0, homeGoals.carbs_g) ? 'over' : ''}>
+                    C{formatTargetProgress(homeToday?.total.carbs_g || 0, homeGoals.carbs_g, 'g')}
+                  </span>
+                </small>
+              </h2>
+              {!hasTargets && targetsStatus === 'loaded' && (
+                <p className="target-empty-note">目標を設定すると残り/超過を表示します。</p>
+              )}
+            </div>
+          </section>
+
+          <section className="panel today-primary-cta">
+            <div>
+              <span className="section-label">入力</span>
+              <strong>食事を記録して今日を更新</strong>
+            </div>
+            <button className="action-button primary-action" type="button" onClick={() => navigateTo('record')}>
+              <Plus size={18} />
+              食事を記録
+            </button>
+          </section>
+
+          <section className="panel today-quick-panel">
+            <div className="section-heading">
+              <div>
+                <span className="section-label">履歴</span>
+                <h2>最近の記録から登録</h2>
+              </div>
+            </div>
+            {recentMeals.length > 0 ? (
+              <ul className="recent-list">
+                {recentMeals.map((meal) => (
+                  <li key={meal.id}>
+                    <div className="recent-edit-button">
+                      <History size={18} />
+                      <span>
+                        <strong>{meal.description}</strong>
+                        <em>{formatMealTime(meal.timestamp)} / {meal.meal_type} / {Math.round(meal.calories_kcal)} kcal</em>
+                      </span>
+                    </div>
+                    <div className="meal-action-row">
+                      <button className="quick-register-button" type="button" disabled={busy !== null} onClick={() => void handleQuickRegister(meal)}>
+                        {busy === 'quick' ? <Loader2 className="spin" size={16} /> : <Zap size={16} />}
+                        登録
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="empty-text">最近の記録はありません。</p>
+            )}
+          </section>
+
+          <section className="panel today-quick-panel">
+            <div className="section-heading">
+              <div>
+                <span className="section-label">定番</span>
+                <h2>お気に入りから登録</h2>
+              </div>
+            </div>
+            {favorites.length > 0 ? (
+              <ul className="recent-list">
+                {favorites.map((favorite) => (
+                  <li key={favorite.id}>
+                    <div className="favorite-info">
+                      <Star size={18} />
+                      <span>
+                        <strong>{favorite.description}</strong>
+                        <em>{Math.round(favorite.calories_kcal)} kcal / P{favorite.protein_g} / F{favorite.fat_g} / C{favorite.carbs_g}</em>
+                      </span>
+                    </div>
+                    <div className="meal-action-row">
+                      <button className="quick-register-button" type="button" disabled={busy !== null} onClick={() => void handleQuickRegisterFavorite(favorite)}>
+                        {busy === 'quick' ? <Loader2 className="spin" size={16} /> : <Zap size={16} />}
+                        登録
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="empty-text">最近の記録からお気に入りを追加できます。</p>
+            )}
+          </section>
+
+          <section className="panel today-meals-panel">
+            <div className="section-heading">
+              <div>
+                <span className="section-label">一覧</span>
+                <h2>今日の食事</h2>
+              </div>
+            </div>
+            {homeSnapshot?.today_meals.length ? (
+              <ul className="today-meal-list">
+                {homeSnapshot.today_meals.map((meal) => (
+                  <li key={meal.id}>
+                    <span>
+                      <strong>{meal.description}</strong>
+                      <em>{formatMealTime(meal.timestamp)} / {meal.meal_type} / {Math.round(meal.calories_kcal)} kcal</em>
+                    </span>
+                    <button className="secondary-action meal-edit-button" type="button" onClick={() => loadMealForEdit(meal)}>
+                      編集
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : homeSnapshotStatus === 'loaded' ? (
+              <p className="empty-text">今日の食事はまだありません。</p>
+            ) : null}
+          </section>
+
+          <section className="panel today-feedback-panel">
+            <button
+              className="action-button secondary-action feedback-action"
+              type="button"
+              disabled={busy !== null || !homeToday?.count}
+              onClick={handleDailyFeedback}
+            >
+              {busy === 'feedback' ? <Loader2 className="spin" size={18} /> : <MessageCircle size={18} />}
+              コメント
+            </button>
+            {dailyFeedback && <p className="feedback-text">{dailyFeedback.feedback}</p>}
           </section>
         </TodayView>
       )}
@@ -1604,6 +1786,7 @@ export function App(): JSX.Element {
               <div className="collapsible-body">
                 <div className="target-grid">
                   <label className="field"><span>目標 kcal</span><input value={targetCaloriesInput} type="number" min="0" step="1" inputMode="numeric" onChange={(event) => setTargetCaloriesInput(event.target.value)} /></label>
+                  <label className="field"><span>目標体重 kg</span><input value={targetWeightInput} type="number" min="20" max="300" step="0.1" inputMode="decimal" placeholder="任意" onChange={(event) => setTargetWeightInput(event.target.value)} /></label>
                   <div className="ratio-grid">
                     <RatioField label="P%" value={pfcRatio.protein} onChange={(value) => setPfcRatio({ ...pfcRatio, protein: value })} />
                     <RatioField label="F%" value={pfcRatio.fat} onChange={(value) => setPfcRatio({ ...pfcRatio, fat: value })} />
@@ -1784,18 +1967,24 @@ function buildFavoritePayload(meal: SavedMeal): FavoriteMealPayload {
   };
 }
 
-function buildTargetsPayload(targets: NutritionTotal): SaveTargetsPayload {
+function buildGoalsPayload(targets: NutritionTotal, targetWeightInput: string): HealthGoals {
   nutritionKeys.forEach(({ key, label }) => {
     if (!Number.isFinite(targets[key]) || targets[key] <= 0) {
       throw new Error(`目標${label}を入力してください。`);
     }
   });
 
+  const targetWeight = targetWeightInput.trim() === '' ? null : Number(targetWeightInput);
+  if (targetWeight !== null && (!Number.isFinite(targetWeight) || targetWeight < 20 || targetWeight > 300)) {
+    throw new Error('目標体重は20〜300kgで入力してください。');
+  }
+
   return {
     calories_kcal: Math.round(targets.calories_kcal),
     protein_g: roundToTenth(targets.protein_g),
     fat_g: roundToTenth(targets.fat_g),
     carbs_g: roundToTenth(targets.carbs_g),
+    target_weight_kg: targetWeight === null ? null : roundToTenth(targetWeight),
   };
 }
 
