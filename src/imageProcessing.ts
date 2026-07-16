@@ -158,6 +158,10 @@ async function renderImageForEstimate(
     blob = await canvasToJpegBlob(canvas, quality);
   }
 
+  if (blob.size > maxImageBytes) {
+    throw new Error('画像を圧縮してもサイズ上限を超えています。より小さい画像でお試しください。');
+  }
+
   const base64 = await blobToBase64(blob);
   return {
     payload: { base64, mimeType: 'image/jpeg', widthPx, heightPx },
