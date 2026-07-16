@@ -93,3 +93,97 @@ test('getDashboardDataはgoogle.script.runの結果を正規化して返す', as
     globalThis.window = previousWindow;
   }
 });
+
+test('HomeSnapshot境界は未記録日・null drop・欠落配列を安全側へ正規化する', () => {
+  const result = gasClient.normalizeHomeSnapshot({
+    date: '2026-07-15',
+    today: {
+      date: '2026-07-15',
+      count: undefined,
+      total: { calories_kcal: 320, protein_g: 'bad', fat_g: null, carbs_g: 40 },
+    },
+    goals: {
+      calories_kcal: undefined,
+      protein_g: null,
+      fat_g: -1,
+      carbs_g: 200,
+      target_weight_kg: undefined,
+    },
+    today_meals: undefined,
+    recent_meals: null,
+    favorites: [{ id: 'fav_1', description: 'おにぎり', calories_kcal: 180 }],
+    active_action: undefined,
+    rule_focus: {
+      source: 'rules',
+      headline: 'まずは記録',
+      summary: '記録しましょう',
+      evidence: undefined,
+      selected_action: null,
+      alternative_action: null,
+    },
+  });
+
+  assert.deepEqual(result.goals, {
+    calories_kcal: null,
+    protein_g: null,
+    fat_g: null,
+    carbs_g: 200,
+    target_weight_kg: null,
+  });
+  assert.deepEqual(result.today, {
+    date: '2026-07-15',
+    count: 0,
+    total: { calories_kcal: 320, protein_g: 0, fat_g: 0, carbs_g: 40 },
+  });
+  assert.deepEqual(result.today_meals, []);
+  assert.deepEqual(result.recent_meals, []);
+  assert.equal(result.favorites.length, 1);
+  assert.equal(result.active_action, null);
+  assert.deepEqual(result.rule_focus.evidence, []);
+});
+
+test('getGoals/saveGoals/getHomeSnapshotは専用RPCを呼び、応答を正規化する', async () => {
+  const previousWindow = globalThis.window;
+  const calls = [];
+  const runner = {
+    withSuccessHandler(handler) {
+      this.successHandler = handler;
+      return this;
+    },
+    withFailureHandler() {
+      return this;
+    },
+    getGoals() {
+      calls.push('getGoals');
+      this.successHandler({ target_weight_kg: 68 });
+    },
+    saveGoals(payload) {
+      calls.push(['saveGoals', payload.target_weight_kg]);
+      this.successHandler({ ok: true, goals: payload });
+    },
+    getHomeSnapshot() {
+      calls.push('getHomeSnapshot');
+      this.successHandler({ date: '2026-07-15' });
+    },
+  };
+
+  globalThis.window = { google: { script: { run: runner } } };
+  try {
+    const goals = await gasClient.getGoals();
+    const saved = await gasClient.saveGoals({
+      calories_kcal: null,
+      protein_g: 60,
+      fat_g: null,
+      carbs_g: 200,
+      target_weight_kg: null,
+    });
+    const snapshot = await gasClient.getHomeSnapshot();
+
+    assert.equal(goals.target_weight_kg, 68);
+    assert.equal(saved.goals.target_weight_kg, null);
+    assert.equal(snapshot.date, '2026-07-15');
+    assert.deepEqual(calls, ['getGoals', ['saveGoals', null], 'getHomeSnapshot']);
+  } finally {
+    globalThis.window = previousWindow;
+  }
+});

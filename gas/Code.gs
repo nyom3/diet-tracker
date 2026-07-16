@@ -31,6 +31,7 @@ const FAVORITE_HEADERS = [
   'created_at',
 ];
 const TARGET_KEYS = ['calories_kcal', 'protein_g', 'fat_g', 'carbs_g'];
+const GOAL_KEYS = TARGET_KEYS.concat(['target_weight_kg']);
 const WEEKLY_REVIEW_HEADERS = ['generated_at', 'window_start', 'window_end', 'text'];
 const MIN_VALID_WEIGHT_KG = 20;
 const MAX_VALID_WEIGHT_KG = 300;
@@ -214,35 +215,78 @@ function getTodaySummary() {
 }
 
 function getTargets() {
-  const sheet = getTargetsSheet();
-  const lastRow = sheet.getLastRow();
-  const targets = createEmptyTargets();
-
-  if (lastRow < 2) {
-    return targets;
-  }
-
-  const values = sheet.getRange(2, 1, lastRow - 1, 2).getValues();
-  values.forEach(function (row) {
-    const key = String(row[0] || '').trim();
-
-    if (TARGET_KEYS.indexOf(key) !== -1 && row[1] !== '') {
-      targets[key] = toNonNegativeNumber(row[1], key);
-    }
-  });
-
-  return targets;
+  return nutritionGoalsFromHealthGoals(getGoals());
 }
 
 function saveTargets(data) {
   const targets = validateTargets(data);
+  const currentGoals = getGoals();
+  const result = saveGoals({
+    calories_kcal: targets.calories_kcal,
+    protein_g: targets.protein_g,
+    fat_g: targets.fat_g,
+    carbs_g: targets.carbs_g,
+    target_weight_kg: currentGoals.target_weight_kg,
+  });
+
+  return { ok: true, targets: nutritionGoalsFromHealthGoals(result.goals) };
+}
+
+function getGoals() {
+  return readGoalsFromSheet(getTargetsSheet());
+}
+
+function saveGoals(data) {
+  const goals = validateGoals(data);
   const sheet = getTargetsSheet();
-  const values = TARGET_KEYS.map(function (key) {
-    return [key, targets[key]];
+  const values = GOAL_KEYS.map(function (key) {
+    return [key, goals[key]];
   });
 
   sheet.getRange(2, 1, values.length, 2).setValues(values);
-  return { ok: true, targets: targets };
+  return { ok: true, goals: goals };
+}
+
+function getHomeSnapshot() {
+  const now = new Date();
+  const timezone = Session.getScriptTimeZone();
+  const date = Utilities.formatDate(now, timezone, 'yyyy-MM-dd');
+  const meals = readFoodLogsFromSheet(getFoodLogSheet());
+  const todayMeals = meals.filter(function (meal) {
+    return isMealOnDateUntil(meal, date, now, timezone);
+  });
+  const recentMeals = meals
+    .filter(function (meal) {
+      const timestamp = new Date(meal.timestamp);
+      return !isNaN(timestamp.getTime()) && timestamp.getTime() <= now.getTime() &&
+        Utilities.formatDate(timestamp, timezone, 'yyyy-MM-dd') !== date;
+    })
+    .sort(function (a, b) {
+      return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
+    })
+    .slice(0, 3);
+  const favorites = readFavoritesFromSheet(getFavoritesSheet())
+    .sort(function (a, b) {
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    })
+    .slice(0, 6);
+  const goals = getGoals();
+  const today = {
+    date: date,
+    count: todayMeals.length,
+    total: sumMeals(todayMeals),
+  };
+
+  return {
+    date: date,
+    today: today,
+    goals: goals,
+    today_meals: todayMeals,
+    recent_meals: recentMeals,
+    favorites: favorites,
+    active_action: null,
+    rule_focus: createRuleFocus(date, today, goals),
+  };
 }
 
 function getWeeklyTrend() {
@@ -808,6 +852,41 @@ function rowToFavorite(row) {
   };
 }
 
+function readFoodLogsFromSheet(sheet) {
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow < 2) {
+    return [];
+  }
+
+  return sheet
+    .getRange(2, 1, lastRow - 1, FOOD_LOG_HEADERS.length)
+    .getValues()
+    .map(function (row) { return rowToFoodLog(row); })
+    .filter(function (meal) { return meal.id; });
+}
+
+function readFavoritesFromSheet(sheet) {
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow < 2) {
+    return [];
+  }
+
+  return sheet
+    .getRange(2, 1, lastRow - 1, FAVORITE_HEADERS.length)
+    .getValues()
+    .map(function (row) { return rowToFavorite(row); })
+    .filter(function (favorite) { return favorite.id; });
+}
+
+function isMealOnDateUntil(meal, date, now, timezone) {
+  const timestamp = new Date(meal.timestamp);
+
+  return !isNaN(timestamp.getTime()) && timestamp.getTime() <= now.getTime() &&
+    Utilities.formatDate(timestamp, timezone, 'yyyy-MM-dd') === date;
+}
+
 function listMealsForTodayUntil(now) {
   const sheet = getFoodLogSheet();
   const lastRow = sheet.getLastRow();
@@ -962,6 +1041,79 @@ function createEmptyTargets() {
   };
 }
 
+function createEmptyGoals() {
+  return {
+    calories_kcal: null,
+    protein_g: null,
+    fat_g: null,
+    carbs_g: null,
+    target_weight_kg: null,
+  };
+}
+
+function nutritionGoalsFromHealthGoals(goals) {
+  return {
+    calories_kcal: goals.calories_kcal,
+    protein_g: goals.protein_g,
+    fat_g: goals.fat_g,
+    carbs_g: goals.carbs_g,
+  };
+}
+
+function readGoalsFromSheet(sheet) {
+  const goals = createEmptyGoals();
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow < 2) {
+    return goals;
+  }
+
+  const values = sheet.getRange(2, 1, lastRow - 1, 2).getValues();
+  values.forEach(function (row) {
+    const key = String(row[0] || '').trim();
+
+    if (TARGET_KEYS.indexOf(key) !== -1 && row[1] !== '') {
+      goals[key] = toNonNegativeNumber(row[1], key);
+    }
+
+    if (key === 'target_weight_kg' && row[1] !== '') {
+      goals.target_weight_kg = toBoundedWeight(row[1], '目標体重');
+    }
+  });
+
+  return goals;
+}
+
+function createRuleFocus(date, today, goals) {
+  const allGoalsUnset = GOAL_KEYS.every(function (key) {
+    return goals[key] === null;
+  });
+  let headline = '今日の記録を続けましょう。';
+  let summary = '食事を記録すると、今日の進み具合を確認できます。';
+  let confidence = 'medium';
+
+  if (today.count === 0) {
+    headline = 'まずは今日の記録から';
+    summary = 'まだ記録がありません。最初の食事を記録しましょう。';
+    confidence = 'low';
+  } else if (allGoalsUnset) {
+    headline = '目標を設定しましょう';
+    summary = '目標を設定すると、今日のカロリーとPFCの進み具合を確認できます。';
+  }
+
+  return {
+    generated_at: new Date().toISOString(),
+    scope: 'today',
+    source: 'rules',
+    headline: headline,
+    summary: summary,
+    confidence: confidence,
+    evidence: [],
+    selected_action: null,
+    alternative_action: null,
+  };
+}
+
 function createMealId() {
   return 'meal_' + Utilities.getUuid();
 }
@@ -1044,6 +1196,20 @@ function validateTargets(data) {
   };
 }
 
+function validateGoals(data) {
+  if (!data || typeof data !== 'object') {
+    throw new Error('目標データが不正です。');
+  }
+
+  return {
+    calories_kcal: toNullableNonNegativeNumber(data.calories_kcal, '目標カロリー'),
+    protein_g: toNullableNonNegativeNumber(data.protein_g, '目標タンパク質'),
+    fat_g: toNullableNonNegativeNumber(data.fat_g, '目標脂質'),
+    carbs_g: toNullableNonNegativeNumber(data.carbs_g, '目標炭水化物'),
+    target_weight_kg: toNullableBoundedWeight(data.target_weight_kg, '目標体重'),
+  };
+}
+
 function normalizeNutritionResult(result, fallbackName) {
   if (!result || typeof result !== 'object') {
     throw new Error('推定結果のJSONが不正です。');
@@ -1097,6 +1263,32 @@ function toNonNegativeNumber(value, label) {
 
   if (!isFinite(numberValue) || numberValue < 0) {
     throw new Error(label + 'は0以上の数値で入力してください。');
+  }
+
+  return numberValue;
+}
+
+function toNullableNonNegativeNumber(value, label) {
+  if (value === null || value === '') {
+    return null;
+  }
+
+  return toNonNegativeNumber(value, label);
+}
+
+function toNullableBoundedWeight(value, label) {
+  if (value === null || value === '') {
+    return null;
+  }
+
+  return toBoundedWeight(value, label);
+}
+
+function toBoundedWeight(value, label) {
+  const numberValue = Number(value);
+
+  if (!isFinite(numberValue) || numberValue < MIN_VALID_WEIGHT_KG || numberValue > MAX_VALID_WEIGHT_KG) {
+    throw new Error(label + 'は20〜300kgの数値で入力してください。');
   }
 
   return numberValue;
