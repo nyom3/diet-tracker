@@ -1408,8 +1408,8 @@ export function App(): JSX.Element {
         )}
 
         <div className="sticky-actions">
-          <p className={`status ${status.type || ''}`} aria-live="polite">
-            {status.message || saveBlockedReason || ''}
+          <p className={`status ${saveBlockedReason ? 'blocked' : status.type || ''}`} aria-live="polite">
+            {saveBlockedReason || status.message || ''}
           </p>
           <button className="action-button secondary-action record-back-action" type="button" onClick={() => navigateTo('today')}>
             今日へ戻る
