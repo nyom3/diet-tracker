@@ -1189,7 +1189,6 @@ export function App(): JSX.Element {
                     ref={photoInputRef}
                     type="file"
                     accept="image/jpeg,image/png"
-                    capture="environment"
                     onChange={(event) => handlePhotoSelection(event.target.files?.[0] || null)}
                   />
                 </label>
