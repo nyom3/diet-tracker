@@ -254,7 +254,7 @@ h2 {
   margin-bottom: 12px;
 }
 
-.today-summary-panel {
+.today-panel.today-summary-panel {
   border-color: var(--line);
   background: var(--surface-soft);
   box-shadow: none;
@@ -343,7 +343,7 @@ h2 {
   padding: 14px;
 }
 
-.record-sticky-actions {
+.record-form .record-sticky-actions {
   border-top: 2px solid var(--ink);
   background: var(--surface);
   box-shadow: 0 -8px 24px rgba(23, 38, 29, 0.1);
