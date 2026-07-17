@@ -311,12 +311,21 @@ function attemptOpenAiChat(request) {
   }
 
   var response;
+  var permissionRetry = false;
   try {
     response = fetchOpenAiChat(apiKey, model, request.messages, {
       jsonMode: request.jsonMode,
       reasoningEffort: request.reasoningEffort,
       maxCompletionTokens: request.maxCompletionTokens,
     });
+    if (isOpenAiPermissionRetryable(response)) {
+      permissionRetry = true;
+      response = fetchOpenAiChat(apiKey, model, request.messages, {
+        jsonMode: request.jsonMode,
+        reasoningEffort: request.reasoningEffort,
+        maxCompletionTokens: request.maxCompletionTokens,
+      });
+    }
   } catch (networkError) {
     commitOpenAiUsage(request.group, request.reservationTokens, 0, false);
     return recordAndReturnBlocked('OpenAI API への接続に失敗しました。', {
@@ -325,6 +334,7 @@ function attemptOpenAiChat(request) {
       group: request.group,
       model: model,
       duration_ms: Date.now() - startedAt,
+      diagnostics: permissionRetry ? 'retry=1' : '',
     });
   }
 
@@ -337,6 +347,7 @@ function attemptOpenAiChat(request) {
       model: model,
       status_code: response.statusCode,
       duration_ms: Date.now() - startedAt,
+      diagnostics: permissionRetry ? 'retry=1' : '',
     };
     return recordAndReturnBlocked(describeOpenAiApiError(response, apiErrorContext), apiErrorContext);
   }
@@ -353,6 +364,7 @@ function attemptOpenAiChat(request) {
       model: model,
       status_code: response.statusCode,
       duration_ms: Date.now() - startedAt,
+      diagnostics: permissionRetry ? 'retry=1' : '',
     });
   }
 
@@ -369,6 +381,7 @@ function attemptOpenAiChat(request) {
       model: model,
       status_code: response.statusCode,
       duration_ms: Date.now() - startedAt,
+      diagnostics: permissionRetry ? 'retry=1' : '',
     });
   }
 
@@ -378,7 +391,7 @@ function attemptOpenAiChat(request) {
   recordAiCallLog({
     outcome: 'success',
     provider: 'openai',
-    stage: 'openai_success',
+    stage: permissionRetry ? 'openai_permission_retry' : 'openai_success',
     request_kind: request.requestKind,
     group: request.group,
     model: model,
@@ -392,6 +405,28 @@ function attemptOpenAiChat(request) {
     finish_reason: choice.finish_reason,
     parts_count: text ? 1 : 0,
   };
+}
+
+// OpenAIの一過性401だけを、同じ予約枠のまま1回だけ再試行する。
+function isOpenAiPermissionRetryable(response) {
+  if (!response || response.statusCode !== 401) {
+    return false;
+  }
+
+  try {
+    var payload = JSON.parse(response.body);
+    var structuredError = payload && payload.error;
+    if (!structuredError || typeof structuredError !== 'object') {
+      return false;
+    }
+    var errorCode = structuredError.code === null || structuredError.code === undefined
+      ? ''
+      : String(structuredError.code).trim();
+    var errorMessage = String(structuredError.message || '').toLowerCase();
+    return errorCode === '' && errorMessage.indexOf('insufficient permissions') !== -1;
+  } catch (parseError) {
+    return false;
+  }
 }
 
 // 応答本文はキー断片などを含む可能性があるため画面へ返さず、401だけを安全な原因別メッセージにする。
@@ -429,6 +464,9 @@ function describeOpenAiApiError(response, outContext) {
   }
   if (errorMessage.indexOf('member of an organization') !== -1) {
     return 'OpenAI API の認証に失敗しました。APIキーの組織メンバー権限を確認してください。';
+  }
+  if (errorMessage.indexOf('insufficient permissions') !== -1) {
+    return 'OpenAI側の一時的な権限エラーが解消しませんでした。時間をおいて再試行してください。';
   }
   return 'OpenAI API の認証に失敗しました。OPENAI_API_KEY の有効性を確認してください。';
 }
