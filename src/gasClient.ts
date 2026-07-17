@@ -11,6 +11,7 @@ import type {
   DataConfidence,
   FavoriteMeal,
   FavoriteMealPayload,
+  GenerateCoachInsightRequest,
   HealthGoals,
   HomeSnapshot,
   MealType,
@@ -67,6 +68,7 @@ type GoogleScriptRun = {
   getGoals: () => void;
   saveGoals: (payload: SaveGoalsPayload) => void;
   getHomeSnapshot: () => void;
+  generateCoachInsight: (request: GenerateCoachInsightRequest) => void;
 };
 
 export function estimateCalories(
@@ -163,6 +165,12 @@ export function getHomeSnapshot(): Promise<HomeSnapshot> {
   return callGas<Partial<HomeSnapshot>>((runner) => {
     runner.getHomeSnapshot();
   }).then(normalizeHomeSnapshot);
+}
+
+export function generateCoachInsight(request: GenerateCoachInsightRequest): Promise<CoachInsight> {
+  return callGas<Partial<CoachInsight>>((runner) => {
+    runner.generateCoachInsight(request);
+  }).then((result) => normalizeCoachInsight(result, '1970-01-01'));
 }
 
 export function getWeeklyTrend(): Promise<WeeklyTrend> {
@@ -324,7 +332,7 @@ function normalizeFavoriteMeal(value: unknown): FavoriteMeal {
   };
 }
 
-function normalizeCoachInsight(value: unknown, fallbackDate: string): CoachInsight {
+export function normalizeCoachInsight(value: unknown, fallbackDate: string): CoachInsight {
   const insight = asRecord(value);
   const rawEvidence = Array.isArray(insight.evidence) ? insight.evidence : [];
 
@@ -352,7 +360,7 @@ function normalizeCoachEvidence(value: unknown, fallbackDate: string): CoachInsi
   return {
     key: normalizeString(evidence.key),
     label: normalizeString(evidence.label),
-    value: normalizeNonNegativeNumber(evidence.value),
+    value: normalizeFiniteNumber(evidence.value),
     unit,
     comparison_value: normalizeNullableNumber(evidence.comparison_value),
     comparison_label: typeof evidence.comparison_label === 'string' ? evidence.comparison_label : null,
@@ -540,6 +548,11 @@ function isMainMealType(value: unknown): value is '朝' | '昼' | '夜' {
 function normalizeNonNegativeNumber(value: unknown): number {
   const number = normalizeNullableNumber(value);
   return number !== null && number >= 0 ? number : 0;
+}
+
+function normalizeFiniteNumber(value: unknown): number {
+  const numberValue = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(numberValue) ? numberValue : 0;
 }
 
 function normalizeNullableNonNegativeNumber(value: unknown): number | null {
