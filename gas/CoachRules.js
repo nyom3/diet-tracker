@@ -125,22 +125,22 @@ function buildCoachCandidatePairs(evidenceSuggestions, actionCandidates) {
   }).slice(0, 3);
 }
 
-function validateCoachAiResponse(candidates, aiResponse) {
+function validateCoachAiResponse(candidates, aiResponse, outContext) {
   if (!Array.isArray(candidates) || candidates.length === 0) {
-    return null;
+    return rejectCoachAiResponse(outContext, 'empty_candidates');
   }
   if (!aiResponse || typeof aiResponse !== 'object') {
-    return null;
+    return rejectCoachAiResponse(outContext, 'response_not_object');
   }
   var allowedKeys = ['headline', 'summary', 'evidence_key', 'evidenceKey', 'action_key', 'actionKey'];
   if (Object.keys(aiResponse).some(function (key) { return allowedKeys.indexOf(key) === -1; })) {
-    return null;
+    return rejectCoachAiResponse(outContext, 'unknown_keys');
   }
 
   var evidenceKey = coachResponseKey(aiResponse, 'evidence_key', 'evidenceKey');
   var actionKey = coachResponseKey(aiResponse, 'action_key', 'actionKey');
   if (!evidenceKey || !actionKey) {
-    return null;
+    return rejectCoachAiResponse(outContext, 'missing_selection');
   }
 
   var matchingCandidate = candidates.some(function (candidate) {
@@ -153,17 +153,17 @@ function validateCoachAiResponse(candidates, aiResponse) {
     return candidateEvidenceKey === evidenceKey && candidateActionKey === actionKey;
   });
   if (!matchingCandidate) {
-    return null;
+    return rejectCoachAiResponse(outContext, 'candidate_mismatch');
   }
 
   if (typeof aiResponse.headline !== 'string' || aiResponse.headline.length > 40) {
-    return null;
+    return rejectCoachAiResponse(outContext, 'headline_invalid');
   }
   if (typeof aiResponse.summary !== 'string' || aiResponse.summary.length > 160) {
-    return null;
+    return rejectCoachAiResponse(outContext, 'summary_length_invalid');
   }
   if (aiResponse.summary === '' || /[0-9０-９]/.test(aiResponse.summary)) {
-    return null;
+    return rejectCoachAiResponse(outContext, 'summary_empty_or_numeric');
   }
 
   return {
@@ -172,6 +172,13 @@ function validateCoachAiResponse(candidates, aiResponse) {
     evidence_key: evidenceKey,
     action_key: actionKey,
   };
+}
+
+function rejectCoachAiResponse(outContext, reason) {
+  if (outContext && typeof outContext === 'object') {
+    outContext.reject_reason = reason;
+  }
+  return null;
 }
 
 function buildCoachInsight(scope, days, goals, today) {

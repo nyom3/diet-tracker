@@ -479,6 +479,27 @@ setCoachActionStatus(
 - `target_date` が過ぎたplanned行はレスポンス上だけ `expired` として扱い、自動トリガーや読取API内の書き込みは行わない。
 - AIの説明、会話、プロンプトは保存しない。
 
+### 10.3 `ai_call_log`
+
+AI境界の成否と失敗原因を分析できるよう、既存Spreadsheet内に次のシートをbest-effortで作成する。
+
+| 列 | 名前 | 内容 |
+|---|---|---|
+| A | timestamp | ISO 8601 |
+| B | outcome | `success` / `fallback` / `failure` |
+| C | provider | `openai` / `gemini` |
+| D | stage | 分岐を識別する固定ステージ名 |
+| E | request_kind | `vision` / `text-estimate` / `text` / `coach-json` 等 |
+| F | group | OpenAIの予算グループ |
+| G | model | 使用モデル |
+| H | status_code | HTTPステータス、取得できない場合は空 |
+| I | error_code | APIが返す構造化エラーコード |
+| J | error_type | APIが返す構造化エラー種別 |
+| K | duration_ms | 呼び出し所要時間 |
+| L | reason | 応答本文を含まない安全な理由 |
+
+応答本文、APIキー、キー断片、食事データ、プロンプトは保存しない。データ行は最大2,000行とし、超過時は古い行から削除する。シート生成・ヘッダー保証・行追加・上限整理の失敗はAI本体の成否へ影響させず、best-effortで破棄する。
+
 ## 11. データフローと性能設計
 
 ### 11.1 読み込み
