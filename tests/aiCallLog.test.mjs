@@ -153,14 +153,14 @@ test('Gemini正常成功・劣化再試行成功・runAiJson失敗・Coach拒否
 
   context.tryOpenAiCoachJsonRequest = () => ({ ok: false, reason: 'OpenAI unavailable' });
   context.callGeminiJson = () => {
-    const error = new Error('Gemini API の呼び出しに失敗しました。status=503');
-    error.statusCode = 503;
-    throw error;
+    throw new Error('Address unavailable: https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=AIzaSyFAKEKEY123');
   };
   const failed = context.runAiJson('prompt', 'low');
   assert.equal(failed.ok, false);
   assert.equal(logs.at(-1).stage, 'gemini_error');
-  assert.equal(logs.at(-1).status_code, 503);
+  assert.equal(logs.at(-1).status_code, undefined);
+  assert.equal(JSON.stringify(logs).includes('AIzaSyFAKEKEY123'), false);
+  assert.equal(logs.at(-1).reason, 'Gemini API への接続に失敗しました。');
 
   context.buildCoachRulesFallback({ generated_at: 'x', scope: 'trend', confidence: 'low', headline: 'h', summary: 's', evidence: [], selected_action: null, alternative_action: null }, 'notice', '', {
     provider: 'openai',

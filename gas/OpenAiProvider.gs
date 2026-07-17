@@ -222,6 +222,9 @@ function runAiJson(promptText, thinkingLevel) {
     };
   } catch (error) {
     var geminiReason = error && error.message ? String(error.message) : 'Gemini APIの応答を取得できませんでした。';
+    var geminiLogReason = error && error.statusCode
+      ? 'Gemini API が HTTP ' + Number(error.statusCode) + ' を返しました。'
+      : 'Gemini API への接続に失敗しました。';
     recordAiCallLog({
       outcome: 'failure',
       provider: 'gemini',
@@ -230,7 +233,7 @@ function runAiJson(promptText, thinkingLevel) {
       model: GEMINI_MODEL,
       status_code: error && error.statusCode,
       duration_ms: Date.now() - geminiStartedAt,
-      reason: geminiReason,
+      reason: geminiLogReason,
     });
     return {
       ok: false,
