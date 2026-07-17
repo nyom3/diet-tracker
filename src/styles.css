@@ -301,6 +301,27 @@ h2 {
   font-weight: 800;
 }
 
+.coach-action-controls {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid rgba(36, 107, 72, 0.18);
+  padding-top: 10px;
+}
+
+.coach-action-buttons {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.coach-action-buttons .action-button {
+  min-height: 44px;
+}
+
+.coach-action-expired {
+  color: var(--danger) !important;
+}
+
 .today-primary-cta {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
@@ -810,6 +831,110 @@ h2 {
 .trend-controls {
   display: grid;
   gap: 12px;
+}
+
+.coach-insight-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.coach-insight-panel .section-heading {
+  align-items: center;
+  margin-bottom: 0;
+}
+
+.coach-insight-panel h2,
+.coach-insight-content h3 {
+  margin: 0;
+}
+
+.coach-insight-button {
+  width: auto;
+  min-width: 150px;
+  min-height: 44px;
+}
+
+.coach-insight-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.coach-insight-status.error,
+.coach-insight-fallback {
+  color: var(--danger);
+}
+
+.coach-insight-content {
+  display: grid;
+  gap: 10px;
+}
+
+.coach-insight-content > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.6;
+}
+
+.coach-insight-source {
+  font-size: 12px !important;
+}
+
+.coach-evidence-list {
+  display: grid;
+  gap: 6px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.coach-evidence-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.coach-evidence-list span {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.coach-evidence-list strong {
+  text-align: right;
+}
+
+.coach-selected-action {
+  display: grid;
+  gap: 8px;
+  border-left: 4px solid var(--primary);
+  background: var(--surface-soft);
+  padding: 10px 12px;
+}
+
+.coach-selected-action > div {
+  display: grid;
+  gap: 4px;
+}
+
+.coach-selected-action strong {
+  line-height: 1.5;
+}
+
+.coach-selected-action .action-button {
+  min-height: 44px;
+}
+
+.coach-alternative-action {
+  display: grid;
+  gap: 4px;
 }
 
 .trend-range-row,

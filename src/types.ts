@@ -168,6 +168,9 @@ export type GenerateCoachInsightRequest = {
   scope: CoachScope;
   range_days?: DashboardRangeDays;
 };
+export type AcceptCoachActionPayload = GenerateCoachInsightRequest & {
+  action_key: string;
+};
 export type CoachActionStatus = 'planned' | 'completed' | 'dismissed' | 'expired';
 export type CoachActionCategory = 'logging' | 'energy' | 'protein' | 'macro_balance' | 'activity';
 
