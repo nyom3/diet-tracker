@@ -409,9 +409,6 @@ function buildCoachDashboardData(rangeDays, now, meals, goals) {
 
 function buildCoachAiPrompt(scope, context, today, candidatePairs) {
   const periodStart = scope === 'today' ? context.dashboard.window_end : context.dashboard.window_start;
-  const promptDays = scope === 'today'
-    ? context.dashboard.days.filter(function (day) { return day.date === context.dashboard.window_end; })
-    : context.dashboard.days;
   const periodMeals = (context.meals || []).map(function (meal) {
     const timestamp = new Date(meal.timestamp);
     if (isNaN(timestamp.getTime())) {
@@ -433,29 +430,20 @@ function buildCoachAiPrompt(scope, context, today, candidatePairs) {
     confidence: context.dashboard.confidence,
     goals: context.dashboard.goals,
     summary: scope === 'today' ? {
-      date: today.date,
-      intake: today.intake,
-      meal_count: today.meal_count,
-      coverage: today.coverage,
+      logging_days: today.meal_count > 0 ? 1 : 0,
+      adequate_days: today.coverage.adequate ? 1 : 0,
+      recording_coverage_ratio: today.coverage.ratio,
+      average_intake_kcal: today.intake.calories_kcal,
+      average_protein_g: today.intake.protein_g,
+      average_steps: today.steps,
+      latest_weight_trend_kg: today.weight_trend_kg,
+      weight_change_kg: null,
     } : context.dashboard.summary,
     averages: scope === 'today' ? today.intake : buildCoachAverageIntake(context.dashboard.days),
     goal_gaps: buildCoachGoalGaps(
       scope === 'today' ? today.intake : buildCoachAverageIntake(context.dashboard.days),
       context.dashboard.goals,
     ),
-    days: promptDays.map(function (day) {
-      return {
-        date: day.date,
-        intake: day.intake,
-        meal_count: day.meal_count,
-        coverage: day.coverage,
-        weight_kg: day.weight_kg,
-        weight_trend_kg: day.weight_trend_kg,
-        steps: day.steps,
-        expenditure_kcal: day.expenditure_kcal,
-        energy_balance_kcal: day.energy_balance_kcal,
-      };
-    }),
     meals: periodMeals,
     candidates: candidatePairs.map(function (pair) {
       return {
