@@ -127,6 +127,56 @@ test('AI呼び出し失敗は例外にせずルール結果へ戻す', () => {
   assert.match(result.fallback_notice, /予算上限に達しました/);
 });
 
+test('コーチJSONのパース失敗はGemini/OpenAIの形状だけを記録してルール結果へ戻す', () => {
+  ['gemini', 'openai'].forEach((provider) => {
+    const { context } = createContext({
+      aiResult: {
+        ok: true,
+        text: provider === 'gemini' ? '{食事名を含む未完了' : '{openai食事未完了',
+        fallback_notice: '',
+        provider,
+        finish_reason: provider === 'gemini' ? 'MAX_TOKENS' : undefined,
+        parts_count: provider === 'gemini' ? 2 : undefined,
+      },
+    });
+    const logs = [];
+    context.recordAiCallLog = (entry) => logs.push(entry);
+
+    const result = context.generateCoachInsight({ scope: 'trend', range_days: 30 });
+
+    assert.equal(result.source, 'rules');
+    assert.equal(logs.length, 1);
+    assert.equal(logs[0].stage, 'coach_json_parse');
+    assert.equal(logs[0].provider, provider);
+    assert.match(logs[0].diagnostics, /^finish_reason=(?:MAX_TOKENS)?;text_len=\d+;parts=\d+;head_brace=1;tail_brace=0$/);
+    assert.equal(JSON.stringify(logs).includes('食事名'), false);
+    assert.equal(JSON.stringify(logs).includes('openai食事'), false);
+  });
+});
+
+test('diagnosticsの組み立て失敗でも既存のルールフォールバックを返す', () => {
+  const { context } = createContext({
+    aiResult: {
+      ok: true,
+      text: '{未完了',
+      fallback_notice: '',
+      provider: 'gemini',
+      finish_reason: 'MAX_TOKENS',
+      parts_count: 1,
+    },
+  });
+  const logs = [];
+  context.recordAiCallLog = (entry) => logs.push(entry);
+  context.buildCoachJsonDiagnostics = () => { throw new Error('診断失敗'); };
+
+  const result = context.generateCoachInsight({ scope: 'trend', range_days: 30 });
+
+  assert.equal(result.source, 'rules');
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].stage, 'coach_json_parse');
+  assert.equal(logs[0].diagnostics, '');
+});
+
 test('scopeと期間をサーバー境界で検証する', () => {
   const { context } = createContext();
   assert.throws(() => context.generateCoachInsight({ scope: 'unknown' }), /対象が不正/);

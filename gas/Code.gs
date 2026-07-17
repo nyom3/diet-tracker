@@ -63,6 +63,8 @@ const AI_CALL_LOG_HEADERS = [
   'error_type',
   'duration_ms',
   'reason',
+  'error_message_redacted',
+  'diagnostics',
 ];
 const AI_CALL_LOG_MAX_DATA_ROWS = 2000;
 const MIN_VALID_WEIGHT_KG = 20;
@@ -527,14 +529,33 @@ function generateCoachInsight(request) {
   }
 
   let aiResponse;
+  let parseTargetText = '';
+  let hasParseTarget = false;
   try {
-    aiResponse = JSON.parse(extractJson(aiResult.text));
+    parseTargetText = extractJson(aiResult.text);
+    hasParseTarget = true;
+    aiResponse = JSON.parse(parseTargetText);
   } catch (error) {
+    let diagnostics = '';
+    try {
+      diagnostics = buildCoachJsonDiagnostics({
+        ...aiResult,
+        text: hasParseTarget ? parseTargetText : aiResult.text,
+      });
+    } catch (diagnosticsError) {
+      // Diagnostics are best-effort and must not change the existing fallback.
+    }
     return buildCoachRulesFallback(
       rulesInsight,
       'AIの応答を確認できないため、ルール結果を表示しました。',
       aiResult.fallback_notice,
-      { stage: 'coach_json_parse', provider: aiResult.provider, request_kind: 'coach-json', reason: 'coach_json_parse_failed' },
+      {
+        stage: 'coach_json_parse',
+        provider: aiResult.provider,
+        request_kind: 'coach-json',
+        reason: 'coach_json_parse_failed',
+        diagnostics: diagnostics,
+      },
     );
   }
 
@@ -711,6 +732,7 @@ function buildCoachRulesFallback(rulesInsight, notice, providerNotice, logContex
     stage: context.stage || 'coach_rules_fallback',
     request_kind: context.request_kind || 'coach-json',
     reason: context.reason || notice,
+    diagnostics: context.diagnostics,
   });
   return {
     generated_at: rulesInsight.generated_at,
@@ -1262,6 +1284,8 @@ function recordAiCallLog(entry) {
       sanitizeAiLogCode(source.error_type),
       isFinite(durationMs) && durationMs >= 0 ? Math.round(durationMs) : '',
       limitAiLogText(source.reason, 500),
+      limitAiLogText(source.error_message_redacted, 200),
+      limitAiLogText(source.diagnostics, 500),
     ]);
 
     const lastRow = sheet.getLastRow();
@@ -1271,6 +1295,25 @@ function recordAiCallLog(entry) {
     }
   } catch (error) {
     // Observability must never break the AI request or its existing fallback.
+  }
+}
+
+function buildCoachJsonDiagnostics(aiResult) {
+  try {
+    const source = aiResult && typeof aiResult === 'object' ? aiResult : {};
+    const text = String(source.text || '');
+    const parts = Number(source.parts_count);
+    const normalizedParts = isFinite(parts) && parts >= 0 ? Math.floor(parts) : 0;
+    const finishReason = sanitizeAiLogCode(source.finish_reason);
+    return [
+      'finish_reason=' + finishReason,
+      'text_len=' + text.length,
+      'parts=' + normalizedParts,
+      'head_brace=' + (text.charAt(0) === '{' ? 1 : 0),
+      'tail_brace=' + (text.charAt(text.length - 1) === '}' ? 1 : 0),
+    ].join(';');
+  } catch (error) {
+    return '';
   }
 }
 

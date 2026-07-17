@@ -186,13 +186,14 @@ function callGeminiJson(promptText, thinkingLevel) {
     },
   }, 'coach-json');
   var payload = JSON.parse(geminiResponse.body);
+  var candidate = payload.candidates && payload.candidates[0];
   var parts = (
-    payload.candidates &&
-    payload.candidates[0] &&
-    payload.candidates[0].content &&
-    payload.candidates[0].content.parts
+    candidate &&
+    candidate.content &&
+    candidate.content.parts
   ) || [];
-  var responsePart = parts.filter(function (part) { return !part.thought && part.text; })[0];
+  var textParts = parts.filter(function (part) { return !part.thought && part.text; });
+  var responsePart = textParts[0];
 
   if (!responsePart || !responsePart.text) {
     throw new Error('Gemini API の応答が空です。');
@@ -201,6 +202,8 @@ function callGeminiJson(promptText, thinkingLevel) {
   return {
     text: String(responsePart.text).trim(),
     fallback_notice: geminiResponse.usedFallback ? GEMINI_FALLBACK_NOTICE : '',
+    finish_reason: candidate && candidate.finishReason,
+    parts_count: textParts.length,
   };
 }
 
@@ -208,7 +211,14 @@ function callGeminiJson(promptText, thinkingLevel) {
 function runAiJson(promptText, thinkingLevel) {
   var openAiAttempt = tryOpenAiCoachJsonRequest(promptText, thinkingLevel);
   if (openAiAttempt.ok) {
-    return { ok: true, text: openAiAttempt.text, fallback_notice: '', provider: 'openai' };
+    return {
+      ok: true,
+      text: openAiAttempt.text,
+      fallback_notice: '',
+      provider: 'openai',
+      finish_reason: openAiAttempt.finish_reason,
+      parts_count: openAiAttempt.parts_count,
+    };
   }
 
   var geminiStartedAt = Date.now();
@@ -219,6 +229,8 @@ function runAiJson(promptText, thinkingLevel) {
       text: geminiResult.text,
       fallback_notice: buildFallbackNotice(openAiAttempt.reason, geminiResult.fallback_notice),
       provider: 'gemini',
+      finish_reason: geminiResult.finish_reason,
+      parts_count: geminiResult.parts_count,
     };
   } catch (error) {
     var geminiReason = error && error.message ? String(error.message) : 'Gemini APIの応答を取得できませんでした。';
@@ -374,7 +386,12 @@ function attemptOpenAiChat(request) {
     duration_ms: Date.now() - startedAt,
     reason: '',
   });
-  return { ok: true, text: String(text).trim() };
+  return {
+    ok: true,
+    text: String(text).trim(),
+    finish_reason: choice.finish_reason,
+    parts_count: text ? 1 : 0,
+  };
 }
 
 // 応答本文はキー断片などを含む可能性があるため画面へ返さず、401だけを安全な原因別メッセージにする。
@@ -387,9 +404,10 @@ function describeOpenAiApiError(response, outContext) {
   try {
     payload = JSON.parse(response.body);
     var structuredError = payload && payload.error;
-    if (outContext && structuredError) {
+    if (outContext && structuredError && typeof structuredError === 'object') {
       outContext.error_code = structuredError.code;
       outContext.error_type = structuredError.type;
+      outContext.error_message_redacted = redactOpenAiErrorMessage(structuredError.message);
     }
   } catch (parseError) {
     payload = null;
@@ -415,6 +433,18 @@ function describeOpenAiApiError(response, outContext) {
   return 'OpenAI API の認証に失敗しました。OPENAI_API_KEY の有効性を確認してください。';
 }
 
+function redactOpenAiErrorMessage(message) {
+  if (message === null || message === undefined) {
+    return '';
+  }
+
+  var normalized = String(message).replace(/[\u0000-\u001F\u007F]/g, ' ').trim();
+  var redacted = normalized
+    .replace(/sk-[A-Za-z0-9_-]{8,}/g, 'sk-***')
+    .replace(/AIza[0-9A-Za-z_-]{20,}/g, 'AIza***');
+  return redacted.slice(0, 200);
+}
+
 function recordAndReturnBlocked(reason, context) {
   recordFallbackReason(reason);
   var source = context && typeof context === 'object' ? context : {};
@@ -430,6 +460,8 @@ function recordAndReturnBlocked(reason, context) {
     error_type: source.error_type,
     duration_ms: source.duration_ms,
     reason: reason,
+    error_message_redacted: source.error_message_redacted,
+    diagnostics: source.diagnostics,
   });
   return { ok: false, reason: reason };
 }
