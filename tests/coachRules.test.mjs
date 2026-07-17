@@ -160,6 +160,7 @@ test('AI応答は未知キー、組み合わせ不一致、長さ超過、数字
   assert.equal(coach.validateCoachAiResponse(candidates, { ...valid, summary: '残り300kcalです。' }), null);
   assert.equal(coach.validateCoachAiResponse(candidates, { ...valid, summary: '残り３００キロカロリーです。' }), null);
   assert.equal(coach.validateCoachAiResponse(candidates, { ...valid, evidence_key: '' }), null);
+  assert.equal(coach.validateCoachAiResponse(candidates, { ...valid, extra: 'unknown' }), null);
   assert.equal(coach.validateCoachAiResponse([], valid), null);
   assert.equal(coach.validateCoachAiResponse(candidates, null), null);
 });

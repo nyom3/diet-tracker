@@ -164,6 +164,10 @@ export type DashboardData = {
 };
 
 export type CoachScope = 'today' | 'trend';
+export type GenerateCoachInsightRequest = {
+  scope: CoachScope;
+  range_days?: DashboardRangeDays;
+};
 export type CoachActionStatus = 'planned' | 'completed' | 'dismissed' | 'expired';
 export type CoachActionCategory = 'logging' | 'energy' | 'protein' | 'macro_balance' | 'activity';
 

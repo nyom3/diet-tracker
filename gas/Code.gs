@@ -276,6 +276,10 @@ function getHomeSnapshot() {
     count: todayMeals.length,
     total: sumMeals(todayMeals),
   };
+  const dashboard = buildCoachDashboardData(7, now, meals, goals);
+  const todayDashboardDay = dashboard.days.filter(function (day) {
+    return day.date === date;
+  })[0] || createCoachEmptyDay(date);
 
   return {
     date: date,
@@ -285,7 +289,235 @@ function getHomeSnapshot() {
     recent_meals: recentMeals,
     favorites: favorites,
     active_action: null,
-    rule_focus: createRuleFocus(date, today, goals),
+    rule_focus: buildCoachInsight('today', dashboard.days, goals, todayDashboardDay),
+  };
+}
+
+function generateCoachInsight(request) {
+  const normalizedRequest = normalizeCoachInsightRequest(request);
+  const now = new Date();
+  const context = getCoachDashboardContext(normalizedRequest.rangeDays, now);
+  const today = context.dashboard.days.filter(function (day) {
+    return day.date === context.dashboard.window_end;
+  })[0] || createCoachEmptyDay(context.dashboard.window_end);
+  const rulesInsight = buildCoachInsight(
+    normalizedRequest.scope,
+    context.dashboard.days,
+    context.dashboard.goals,
+    today,
+  );
+  const evidenceSuggestions = buildCoachEvidence(
+    normalizedRequest.scope,
+    context.dashboard.days,
+    context.dashboard.goals,
+    today,
+  );
+  const actionCandidates = buildCoachActionCandidates(
+    context.dashboard.days,
+    context.dashboard.goals,
+    today,
+  );
+  const candidatePairs = buildCoachCandidatePairs(evidenceSuggestions, actionCandidates);
+
+  if (candidatePairs.length === 0) {
+    return rulesInsight;
+  }
+
+  const prompt = buildCoachAiPrompt(normalizedRequest.scope, context, today, candidatePairs);
+  const aiResult = runAiJson(prompt, 'low');
+
+  if (!aiResult || !aiResult.ok) {
+    return buildCoachRulesFallback(rulesInsight, 'AIを利用できないため、ルール結果を表示しました。', aiResult && aiResult.reason);
+  }
+
+  let aiResponse;
+  try {
+    aiResponse = JSON.parse(extractJson(aiResult.text));
+  } catch (error) {
+    return buildCoachRulesFallback(rulesInsight, 'AIの応答を確認できないため、ルール結果を表示しました。', aiResult.fallback_notice);
+  }
+
+  const validated = validateCoachAiResponse(candidatePairs, aiResponse);
+  if (!validated) {
+    return buildCoachRulesFallback(rulesInsight, 'AIの応答を確認できないため、ルール結果を表示しました。', aiResult.fallback_notice);
+  }
+
+  const selectedPair = candidatePairs.filter(function (pair) {
+    return pair.evidence_key === validated.evidence_key && pair.action_key === validated.action_key;
+  })[0];
+  const alternativePair = candidatePairs.filter(function (pair) {
+    return pair !== selectedPair;
+  })[0] || null;
+
+  return {
+    generated_at: rulesInsight.generated_at,
+    scope: rulesInsight.scope,
+    source: 'ai',
+    headline: validated.headline,
+    summary: validated.summary,
+    confidence: selectedPair.confidence,
+    evidence: selectedPair.evidence,
+    selected_action: selectedPair.action,
+    alternative_action: alternativePair ? alternativePair.action : null,
+    fallback_notice: aiResult.fallback_notice || undefined,
+  };
+}
+
+function normalizeCoachInsightRequest(request) {
+  const source = request && typeof request === 'object' ? request : {};
+  const scope = String(source.scope || '').trim();
+
+  if (scope !== 'today' && scope !== 'trend') {
+    throw new Error('コーチ分析の対象が不正です。');
+  }
+
+  const rangeDays = scope === 'trend' ? Number(source.range_days) : 7;
+  if ([7, 30, 90].indexOf(rangeDays) === -1) {
+    throw new Error('分析期間は7、30、90日のいずれかです。');
+  }
+
+  return { scope: scope, rangeDays: rangeDays };
+}
+
+function getCoachDashboardContext(rangeDays, now) {
+  const meals = readFoodLogsFromSheet(getFoodLogSheet());
+  const goals = getGoals();
+  return {
+    dashboard: buildCoachDashboardData(rangeDays, now, meals, goals),
+    meals: meals,
+  };
+}
+
+function buildCoachDashboardData(rangeDays, now, meals, goals) {
+  const spreadsheet = getSpreadsheet();
+  const healthSheet = spreadsheet.getSheetByName(HEALTH_DATA_SHEET_NAME);
+  const healthValues = healthSheet && healthSheet.getLastRow() >= 2 && healthSheet.getLastColumn() >= 1
+    ? healthSheet.getRange(1, 1, healthSheet.getLastRow(), healthSheet.getLastColumn()).getValues()
+    : [];
+  const timezone = Session.getScriptTimeZone();
+  const metricsNow = Utilities.formatDate(now, timezone, "yyyy-MM-dd'T'HH:mm:ssZ");
+
+  return buildDashboardData({
+    rangeDays: rangeDays,
+    now: metricsNow,
+    foodLogs: meals || [],
+    healthHeaders: healthValues.length > 0 ? healthValues[0] : [],
+    healthRows: healthValues.slice(1),
+    targets: GOAL_KEYS.map(function (key) { return [key, goals[key]]; }),
+  });
+}
+
+function buildCoachAiPrompt(scope, context, today, candidatePairs) {
+  const periodStart = scope === 'today' ? context.dashboard.window_end : context.dashboard.window_start;
+  const periodMeals = (context.meals || []).map(function (meal) {
+    const timestamp = new Date(meal.timestamp);
+    if (isNaN(timestamp.getTime())) {
+      return null;
+    }
+    const date = Utilities.formatDate(timestamp, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+    if (date < periodStart || date > context.dashboard.window_end) {
+      return null;
+    }
+    return { meal_type: meal.meal_type, description: meal.description };
+  }).filter(function (meal) { return meal !== null; });
+
+  const payload = {
+    scope: scope,
+    period: {
+      start: periodStart,
+      end: context.dashboard.window_end,
+    },
+    confidence: context.dashboard.confidence,
+    goals: context.dashboard.goals,
+    summary: scope === 'today' ? {
+      logging_days: today.meal_count > 0 ? 1 : 0,
+      adequate_days: today.coverage.adequate ? 1 : 0,
+      recording_coverage_ratio: today.coverage.ratio,
+      average_intake_kcal: today.intake.calories_kcal,
+      average_protein_g: today.intake.protein_g,
+      average_steps: today.steps,
+      latest_weight_trend_kg: today.weight_trend_kg,
+      weight_change_kg: null,
+    } : context.dashboard.summary,
+    averages: scope === 'today' ? today.intake : buildCoachAverageIntake(context.dashboard.days),
+    goal_gaps: buildCoachGoalGaps(
+      scope === 'today' ? today.intake : buildCoachAverageIntake(context.dashboard.days),
+      context.dashboard.goals,
+    ),
+    meals: periodMeals,
+    candidates: candidatePairs.map(function (pair) {
+      return {
+        evidence_key: pair.evidence_key,
+        action_key: pair.action_key,
+        evidence: pair.evidence,
+      };
+    }),
+  };
+
+  return 'あなたは食事記録アプリの安全なコーチです。入力JSONに含まれる候補だけを選び、医療診断や目標変更をせずに回答してください。' +
+    '見出しは40文字以内、説明は160文字以内で、説明には半角・全角を問わず数字を含めないでください。' +
+    'JSONのみで返し、action_keyとevidence_keyは同じ候補ペアから選んでください。' +
+    'headline、summary、evidence_key、action_key以外のキーは返さないでください。\n' +
+    JSON.stringify(payload);
+}
+
+function buildCoachAverageIntake(days) {
+  const loggedDays = (days || []).filter(function (day) { return day.meal_count > 0; });
+  const keys = ['calories_kcal', 'protein_g', 'fat_g', 'carbs_g'];
+  const result = {};
+  keys.forEach(function (key) {
+    if (loggedDays.length === 0) {
+      result[key] = null;
+      return;
+    }
+    result[key] = Math.round(loggedDays.reduce(function (total, day) {
+      return total + day.intake[key];
+    }, 0) / loggedDays.length * 10) / 10;
+  });
+  return result;
+}
+
+function buildCoachGoalGaps(values, goals) {
+  const keys = ['calories_kcal', 'protein_g', 'fat_g', 'carbs_g'];
+  const result = {};
+  keys.forEach(function (key) {
+    const value = values[key];
+    const goal = goals[key];
+    result[key] = value !== null && value !== undefined && goal !== null && goal !== undefined
+      ? Math.round((value - goal) * 10) / 10
+      : null;
+  });
+  return result;
+}
+
+function buildCoachRulesFallback(rulesInsight, notice, providerNotice) {
+  const notices = [notice, providerNotice].filter(function (value) { return value; });
+  return {
+    generated_at: rulesInsight.generated_at,
+    scope: rulesInsight.scope,
+    source: 'rules',
+    headline: rulesInsight.headline,
+    summary: rulesInsight.summary,
+    confidence: rulesInsight.confidence,
+    evidence: rulesInsight.evidence,
+    selected_action: rulesInsight.selected_action,
+    alternative_action: rulesInsight.alternative_action,
+    fallback_notice: notices.join(' '),
+  };
+}
+
+function createCoachEmptyDay(date) {
+  return {
+    date: date,
+    intake: createZeroTotal(),
+    meal_count: 0,
+    coverage: { logged_main_meal_types: [], ratio: 0, adequate: false },
+    weight_kg: null,
+    weight_trend_kg: null,
+    body_fat_pct: null,
+    steps: null,
+    expenditure_kcal: null,
+    energy_balance_kcal: null,
   };
 }
 
@@ -1082,36 +1314,6 @@ function readGoalsFromSheet(sheet) {
   });
 
   return goals;
-}
-
-function createRuleFocus(date, today, goals) {
-  const allGoalsUnset = GOAL_KEYS.every(function (key) {
-    return goals[key] === null;
-  });
-  let headline = '今日の記録を続けましょう。';
-  let summary = '食事を記録すると、今日の進み具合を確認できます。';
-  let confidence = 'medium';
-
-  if (today.count === 0) {
-    headline = 'まずは今日の記録から';
-    summary = 'まだ記録がありません。最初の食事を記録しましょう。';
-    confidence = 'low';
-  } else if (allGoalsUnset) {
-    headline = '目標を設定しましょう';
-    summary = '目標を設定すると、今日のカロリーとPFCの進み具合を確認できます。';
-  }
-
-  return {
-    generated_at: new Date().toISOString(),
-    scope: 'today',
-    source: 'rules',
-    headline: headline,
-    summary: summary,
-    confidence: confidence,
-    evidence: [],
-    selected_action: null,
-    alternative_action: null,
-  };
 }
 
 function createMealId() {

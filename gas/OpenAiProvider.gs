@@ -153,6 +153,81 @@ function tryOpenAiTextRequest(promptText, reasoningLevel) {
   });
 }
 
+// AIコーチ用の構造化JSON応答。OpenAI側の予算ゲートと予約処理は既存窓口を通す。
+function tryOpenAiCoachJsonRequest(promptText, reasoningLevel) {
+  var reservationTokens = openAiCalculateReservation({
+    promptText: promptText,
+    maxOutputTokens: OPENAI_TEXT_MAX_COMPLETION_TOKENS,
+  });
+
+  return attemptOpenAiChat({
+    group: OPENAI_CALL_GROUP,
+    reservationTokens: reservationTokens,
+    messages: [{ role: 'user', content: promptText }],
+    jsonMode: true,
+    reasoningEffort: reasoningLevel || 'low',
+    maxCompletionTokens: OPENAI_TEXT_MAX_COMPLETION_TOKENS,
+    requestKind: 'coach-json',
+  });
+}
+
+function callGeminiJson(promptText, thinkingLevel) {
+  var apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
+
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY が設定されていません。');
+  }
+
+  var geminiResponse = fetchGeminiWithFallback(apiKey, {
+    contents: [{ role: 'user', parts: [{ text: String(promptText || '').trim() }] }],
+    generationConfig: {
+      response_mime_type: 'application/json',
+      thinkingConfig: { thinkingLevel: thinkingLevel || 'low' },
+    },
+  });
+  var payload = JSON.parse(geminiResponse.body);
+  var parts = (
+    payload.candidates &&
+    payload.candidates[0] &&
+    payload.candidates[0].content &&
+    payload.candidates[0].content.parts
+  ) || [];
+  var responsePart = parts.filter(function (part) { return !part.thought && part.text; })[0];
+
+  if (!responsePart || !responsePart.text) {
+    throw new Error('Gemini API の応答が空です。');
+  }
+
+  return {
+    text: String(responsePart.text).trim(),
+    fallback_notice: geminiResponse.usedFallback ? GEMINI_FALLBACK_NOTICE : '',
+  };
+}
+
+// AIコーチ専用のOpenAI→Gemini JSON fallback。障害は呼び出し側でルール結果へ戻す。
+function runAiJson(promptText, thinkingLevel) {
+  var openAiAttempt = tryOpenAiCoachJsonRequest(promptText, thinkingLevel);
+  if (openAiAttempt.ok) {
+    return { ok: true, text: openAiAttempt.text, fallback_notice: '' };
+  }
+
+  try {
+    var geminiResult = callGeminiJson(promptText, thinkingLevel);
+    return {
+      ok: true,
+      text: geminiResult.text,
+      fallback_notice: buildFallbackNotice(openAiAttempt.reason, geminiResult.fallback_notice),
+    };
+  } catch (error) {
+    var geminiReason = error && error.message ? String(error.message) : 'Gemini APIの応答を取得できませんでした。';
+    return {
+      ok: false,
+      reason: buildFallbackNotice(openAiAttempt.reason, geminiReason),
+      fallback_notice: '',
+    };
+  }
+}
+
 // callGeminiText と同じ戻り値の形({text, fallback_notice})でOpenAI→Geminiの順に試す。
 // summarizeTodayFeedback/summarizeWeeklyFeedback から呼ばれる公開窓口。
 function runAiText(promptText, thinkingLevel) {

@@ -132,6 +132,10 @@ function validateCoachAiResponse(candidates, aiResponse) {
   if (!aiResponse || typeof aiResponse !== 'object') {
     return null;
   }
+  var allowedKeys = ['headline', 'summary', 'evidence_key', 'evidenceKey', 'action_key', 'actionKey'];
+  if (Object.keys(aiResponse).some(function (key) { return allowedKeys.indexOf(key) === -1; })) {
+    return null;
+  }
 
   var evidenceKey = coachResponseKey(aiResponse, 'evidence_key', 'evidenceKey');
   var actionKey = coachResponseKey(aiResponse, 'action_key', 'actionKey');
