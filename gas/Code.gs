@@ -1,6 +1,7 @@
 const FOOD_LOG_SHEET_NAME = 'food_log';
 const FAVORITES_SHEET_NAME = 'favorites';
 const TARGETS_SHEET_NAME = 'targets';
+const COACH_ACTIONS_SHEET_NAME = 'coach_actions';
 const HEALTH_DATA_SHEET_NAME = 'health_data';
 const WEEKLY_REVIEW_SHEET_NAME = 'weekly_review';
 const GEMINI_MODEL = 'gemini-3.5-flash';
@@ -33,6 +34,21 @@ const FAVORITE_HEADERS = [
 const TARGET_KEYS = ['calories_kcal', 'protein_g', 'fat_g', 'carbs_g'];
 const GOAL_KEYS = TARGET_KEYS.concat(['target_weight_kg']);
 const WEEKLY_REVIEW_HEADERS = ['generated_at', 'window_start', 'window_end', 'text'];
+const COACH_ACTIONS_HEADERS = [
+  'id',
+  'created_at',
+  'target_date',
+  'category',
+  'action_key',
+  'text',
+  'status',
+  'completed_at',
+  'evidence_json',
+];
+const COACH_ACTION_CATEGORIES = ['logging', 'energy', 'protein', 'macro_balance', 'activity'];
+const COACH_ACTION_STATUSES = ['planned', 'completed', 'dismissed'];
+const COACH_ACTION_MAX_TEXT_LENGTH = 200;
+const COACH_ACTION_MAX_EVIDENCE_LENGTH = 5000;
 const MIN_VALID_WEIGHT_KG = 20;
 const MAX_VALID_WEIGHT_KG = 300;
 const MAX_AI_IMAGE_BYTES = Math.floor(1.5 * 1024 * 1024);
@@ -280,6 +296,7 @@ function getHomeSnapshot() {
   const todayDashboardDay = dashboard.days.filter(function (day) {
     return day.date === date;
   })[0] || createCoachEmptyDay(date);
+  const activeAction = findActiveCoachAction(readCoachActionRecords(getCoachActionsSheet()), date);
 
   return {
     date: date,
@@ -288,9 +305,167 @@ function getHomeSnapshot() {
     today_meals: todayMeals,
     recent_meals: recentMeals,
     favorites: favorites,
-    active_action: null,
+    active_action: activeAction,
     rule_focus: buildCoachInsight('today', dashboard.days, goals, todayDashboardDay),
   };
+}
+
+function acceptCoachAction(payload) {
+  const normalizedRequest = normalizeCoachActionRequest(payload);
+  const actionKey = String(payload.action_key || '').trim();
+  const now = new Date();
+  const context = getCoachDashboardContext(normalizedRequest.rangeDays, now);
+  const today = context.dashboard.days.filter(function (day) {
+    return day.date === context.dashboard.window_end;
+  })[0] || createCoachEmptyDay(context.dashboard.window_end);
+  const evidenceSuggestions = buildCoachEvidence(
+    normalizedRequest.scope,
+    context.dashboard.days,
+    context.dashboard.goals,
+    today,
+  );
+  const actionCandidates = buildCoachActionCandidates(
+    context.dashboard.days,
+    context.dashboard.goals,
+    today,
+  );
+  const candidatePairs = buildCoachCandidatePairs(evidenceSuggestions, actionCandidates);
+  const pair = candidatePairs.filter(function (candidatePair) {
+    return candidatePair.action_key === actionKey;
+  })[0];
+
+  if (!pair) {
+    throw new Error('指定された行動候補を再現できません。画面を更新してください。');
+  }
+
+  const record = buildCoachActionRecord(pair, now, context.dashboard.window_end);
+  return withCoachActionLock(function () {
+    const sheet = getCoachActionsSheet();
+    const records = readCoachActionRecords(sheet);
+    records.forEach(function (existing) {
+      if (existing.status === 'planned' && existing.target_date === record.target_date) {
+        sheet.getRange(existing.row_index, 7, 1, 2).setValues([['dismissed', '']]);
+      }
+    });
+    sheet.appendRow([
+      record.id,
+      record.created_at,
+      record.target_date,
+      record.category,
+      record.action_key,
+      record.text,
+      record.status,
+      record.completed_at,
+      record.evidence_json,
+    ]);
+    return coachActionResponse(record);
+  });
+}
+
+function setCoachActionStatus(id, status) {
+  const normalizedId = String(id || '').trim();
+  const normalizedStatus = String(status || '').trim();
+  if (!/^action_[\w-]+$/.test(normalizedId)) {
+    throw new Error('行動idが不正です。');
+  }
+  if (['completed', 'dismissed'].indexOf(normalizedStatus) === -1) {
+    throw new Error('行動ステータスが不正です。');
+  }
+
+  return withCoachActionLock(function () {
+    const sheet = getCoachActionsSheet();
+    const records = readCoachActionRecords(sheet);
+    const record = records.filter(function (candidate) {
+      return candidate.id === normalizedId;
+    })[0];
+    if (!record) {
+      throw new Error('対象の行動が見つかりません。');
+    }
+    if (record.status !== 'planned') {
+      throw new Error('完了または見送り済みの行動は更新できません。');
+    }
+
+    const completedAt = normalizedStatus === 'completed' ? new Date().toISOString() : '';
+    sheet.getRange(record.row_index, 7, 1, 2).setValues([[normalizedStatus, completedAt]]);
+    return coachActionResponse({
+      ...record,
+      status: normalizedStatus,
+      completed_at: completedAt || null,
+    });
+  });
+}
+
+function normalizeCoachActionRequest(payload) {
+  const source = payload && typeof payload === 'object' ? payload : {};
+  const insightRequest = normalizeCoachInsightRequest(source);
+  const actionKey = String(source.action_key || '').trim();
+  if (!actionKey || actionKey.length > 64) {
+    throw new Error('行動キーが不正です。');
+  }
+  return {
+    scope: insightRequest.scope,
+    rangeDays: insightRequest.rangeDays,
+    actionKey: actionKey,
+  };
+}
+
+function buildCoachActionRecord(pair, now, todayDate) {
+  const action = pair && pair.action;
+  if (!action || COACH_ACTION_CATEGORIES.indexOf(action.category) === -1
+    || !action.key || action.key.length > 64
+    || typeof action.text !== 'string' || !action.text.trim()
+    || action.text.length > COACH_ACTION_MAX_TEXT_LENGTH
+    || !/^\d{4}-\d{2}-\d{2}$/.test(action.target_date)) {
+    throw new Error('行動候補のサーバー検証に失敗しました。');
+  }
+  const targetTime = Date.parse(action.target_date + 'T00:00:00Z');
+  const todayTime = Date.parse(todayDate + 'T00:00:00Z');
+  const daysFromToday = Math.floor((targetTime - todayTime) / (24 * 60 * 60 * 1000));
+  if (!isFinite(targetTime) || !isFinite(todayTime) || daysFromToday < 0 || daysFromToday > 7) {
+    throw new Error('行動の期限は受付日から7日以内にしてください。');
+  }
+
+  const evidenceJson = JSON.stringify(pair.evidence || []);
+  if (evidenceJson.length > COACH_ACTION_MAX_EVIDENCE_LENGTH) {
+    throw new Error('行動の根拠スナップショットが大きすぎます。');
+  }
+
+  return {
+    id: createCoachActionId(),
+    created_at: now.toISOString(),
+    target_date: action.target_date,
+    category: action.category,
+    action_key: action.key,
+    text: action.text.trim(),
+    status: 'planned',
+    completed_at: null,
+    evidence_json: evidenceJson,
+  };
+}
+
+function coachActionResponse(record) {
+  return {
+    id: record.id,
+    created_at: record.created_at,
+    target_date: record.target_date,
+    key: record.action_key,
+    category: record.category,
+    text: record.text,
+    status: record.status,
+    completed_at: record.completed_at || null,
+  };
+}
+
+function withCoachActionLock(callback) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    throw new Error('行動の更新が競合しました。少し待ってから再試行してください。');
+  }
+  try {
+    return callback();
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function generateCoachInsight(request) {
@@ -960,6 +1135,23 @@ function getWeeklyReviewSheet() {
   return sheet;
 }
 
+function getCoachActionsSheet() {
+  const spreadsheet = getSpreadsheet();
+  const sheet = spreadsheet.getSheetByName(COACH_ACTIONS_SHEET_NAME)
+    || spreadsheet.insertSheet(COACH_ACTIONS_SHEET_NAME);
+  const headerRange = sheet.getRange(1, 1, 1, COACH_ACTIONS_HEADERS.length);
+  const headers = headerRange.getValues()[0];
+  const shouldWriteHeaders = COACH_ACTIONS_HEADERS.some(function (header, index) {
+    return headers[index] !== header;
+  });
+
+  if (shouldWriteHeaders) {
+    headerRange.setValues([COACH_ACTIONS_HEADERS]);
+  }
+
+  return sheet;
+}
+
 function getSpreadsheet() {
   const spreadsheetId = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
   const spreadsheet = spreadsheetId
@@ -971,6 +1163,67 @@ function getSpreadsheet() {
   }
 
   return spreadsheet;
+}
+
+function readCoachActionRecords(sheet) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    return [];
+  }
+
+  return sheet.getRange(2, 1, lastRow - 1, COACH_ACTIONS_HEADERS.length)
+    .getValues()
+    .map(function (row, index) {
+      return rowToCoachActionRecord(row, index + 2);
+    })
+    .filter(function (record) { return record.id; });
+}
+
+function rowToCoachActionRecord(row, rowIndex) {
+  const status = String(row[6] || '').trim();
+  if (COACH_ACTION_STATUSES.indexOf(status) === -1) {
+    throw new Error('coach_actionsのステータスが不正です。');
+  }
+  const category = String(row[3] || '').trim();
+  if (COACH_ACTION_CATEGORIES.indexOf(category) === -1) {
+    throw new Error('coach_actionsのカテゴリが不正です。');
+  }
+  const actionKey = String(row[4] || '').trim();
+  const text = String(row[5] || '').trim();
+  const evidenceJson = String(row[8] || '').trim();
+  if (!actionKey || actionKey.length > 64 || !text || text.length > COACH_ACTION_MAX_TEXT_LENGTH
+    || evidenceJson.length > COACH_ACTION_MAX_EVIDENCE_LENGTH) {
+    throw new Error('coach_actionsの値が不正です。');
+  }
+  return {
+    row_index: rowIndex,
+    id: String(row[0] || '').trim(),
+    created_at: row[1] instanceof Date ? row[1].toISOString() : String(row[1] || '').trim(),
+    target_date: formatSheetDate(row[2]),
+    category: category,
+    action_key: actionKey,
+    text: text,
+    status: status,
+    completed_at: row[7] instanceof Date ? row[7].toISOString() : String(row[7] || '').trim() || null,
+    evidence_json: evidenceJson,
+  };
+}
+
+function findActiveCoachAction(records, todayDate) {
+  const planned = (records || []).filter(function (record) {
+    return record.status === 'planned';
+  }).sort(function (left, right) {
+    const createdDifference = Date.parse(right.created_at) - Date.parse(left.created_at);
+    return isNaN(createdDifference) ? right.row_index - left.row_index : createdDifference;
+  });
+  if (planned.length === 0) {
+    return null;
+  }
+  const selected = planned[0];
+  return coachActionResponse({
+    ...selected,
+    status: selected.target_date < todayDate ? 'expired' : 'planned',
+  });
 }
 
 function ensureFoodLogHeaders(sheet) {
@@ -1322,6 +1575,10 @@ function createMealId() {
 
 function createFavoriteId() {
   return 'fav_' + Utilities.getUuid();
+}
+
+function createCoachActionId() {
+  return 'action_' + Utilities.getUuid();
 }
 
 function validateFoodLogInput(data) {

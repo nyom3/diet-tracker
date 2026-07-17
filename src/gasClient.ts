@@ -1,6 +1,7 @@
 import type {
   AiProviderMode,
   AiStatus,
+  AcceptCoachActionPayload,
   CoachAction,
   CoachActionCandidate,
   CoachActionCategory,
@@ -69,6 +70,8 @@ type GoogleScriptRun = {
   saveGoals: (payload: SaveGoalsPayload) => void;
   getHomeSnapshot: () => void;
   generateCoachInsight: (request: GenerateCoachInsightRequest) => void;
+  acceptCoachAction: (payload: AcceptCoachActionPayload) => void;
+  setCoachActionStatus: (id: string, status: 'completed' | 'dismissed') => void;
 };
 
 export function estimateCalories(
@@ -171,6 +174,18 @@ export function generateCoachInsight(request: GenerateCoachInsightRequest): Prom
   return callGas<Partial<CoachInsight>>((runner) => {
     runner.generateCoachInsight(request);
   }).then((result) => normalizeCoachInsight(result, '1970-01-01'));
+}
+
+export function acceptCoachAction(payload: AcceptCoachActionPayload): Promise<CoachAction> {
+  return callGas<CoachAction>((runner) => {
+    runner.acceptCoachAction(payload);
+  }).then(normalizeCoachActionResult);
+}
+
+export function setCoachActionStatus(id: string, status: 'completed' | 'dismissed'): Promise<CoachAction> {
+  return callGas<CoachAction>((runner) => {
+    runner.setCoachActionStatus(id, status);
+  }).then(normalizeCoachActionResult);
 }
 
 export function getWeeklyTrend(): Promise<WeeklyTrend> {
@@ -407,6 +422,19 @@ function normalizeCoachAction(value: unknown): CoachAction | null {
     created_at: normalizeString(action.created_at),
     status,
     completed_at: typeof action.completed_at === 'string' ? action.completed_at : null,
+  };
+}
+
+function normalizeCoachActionResult(value: unknown): CoachAction {
+  return normalizeCoachAction(value) || {
+    key: '',
+    category: 'logging',
+    text: '',
+    target_date: '1970-01-01',
+    id: '',
+    created_at: '',
+    status: 'planned',
+    completed_at: null,
   };
 }
 

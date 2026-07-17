@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import {
   addFavorite,
+  setCoachActionStatus,
   confirmOpenAiEligibility,
   deleteMeal,
   estimateCalories,
@@ -40,6 +41,7 @@ import { prepareSelectedImage, readSelectedImage, type PreparedImage } from './i
 import type {
   AiProviderMode,
   AiStatus,
+  CoachActionStatus,
   DashboardData,
   DashboardRangeDays,
   DailyFeedback,
@@ -250,7 +252,7 @@ export function App(): JSX.Element {
   const [aiModeSwitching, setAiModeSwitching] = React.useState(false);
   const [status, setStatus] = React.useState<{ message: string; type?: 'success' | 'error' }>({ message: '' });
   const [busy, setBusy] = React.useState<
-    'estimate' | 'save' | 'quick' | 'favorite' | 'removeFavorite' | 'feedback' | 'targets' | null
+    'estimate' | 'save' | 'quick' | 'favorite' | 'removeFavorite' | 'feedback' | 'targets' | 'coachAction' | null
   >(null);
   const [quickUndo, setQuickUndo] = React.useState<QuickUndo | null>(null);
   const draftPausedRef = React.useRef(true);
@@ -979,6 +981,28 @@ export function App(): JSX.Element {
     }
   }
 
+  async function handleCoachActionStatus(nextStatus: Extract<CoachActionStatus, 'completed' | 'dismissed'>): Promise<void> {
+    const action = homeSnapshot?.active_action;
+    if (!action || action.status === 'expired') {
+      return;
+    }
+
+    try {
+      setBusy('coachAction');
+      setStatus({ message: nextStatus === 'completed' ? '行動を完了として記録中です。' : '行動を見送りとして記録中です。' });
+      await setCoachActionStatus(action.id, nextStatus);
+      await loadHomeSnapshot(true);
+      setStatus({
+        message: nextStatus === 'completed' ? '行動を完了しました。' : '行動を見送りました。',
+        type: 'success',
+      });
+    } catch (error) {
+      setStatus({ message: getErrorMessage(error), type: 'error' });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <div className={`app-shell ${currentView === 'record' ? 'record-active' : ''}`}>
       {isSettingsOpen && (
@@ -1139,6 +1163,33 @@ export function App(): JSX.Element {
             <h2>{homeSnapshot?.active_action?.text || homeSnapshot?.rule_focus.headline || 'まずは食事を1件記録する'}</h2>
             <p>{homeSnapshot?.active_action ? '選択中のアクションです。' : homeSnapshot?.rule_focus.summary || '食事を記録すると、今日の進み具合を確認できます。'}</p>
             {homeSnapshot?.rule_focus.source === 'rules' && <small className="focus-source">ルールベースの案内</small>}
+            {homeSnapshot?.active_action && (
+              <div className="coach-action-controls" aria-live="polite">
+                {homeSnapshot.active_action.status === 'expired' ? (
+                  <p className="coach-action-expired">この行動の期限が過ぎています。推移画面から新しい行動を選べます。</p>
+                ) : (
+                  <div className="coach-action-buttons">
+                    <button
+                      className="action-button secondary-action"
+                      type="button"
+                      disabled={busy !== null}
+                      onClick={() => void handleCoachActionStatus('completed')}
+                    >
+                      {busy === 'coachAction' ? <Loader2 className="spin" size={18} /> : <Check size={18} />}
+                      完了
+                    </button>
+                    <button
+                      className="action-button secondary-action"
+                      type="button"
+                      disabled={busy !== null}
+                      onClick={() => void handleCoachActionStatus('dismissed')}
+                    >
+                      見送り
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </section>
 
           <section className="panel today-panel today-summary-panel">
@@ -1775,6 +1826,7 @@ export function App(): JSX.Element {
           rangeDays={dashboardRange}
           onRangeChange={setDashboardRange}
           onRetry={() => void loadDashboard(dashboardRange, true)}
+          onActionAccepted={() => loadHomeSnapshot(true)}
         >
           <section className={`panel target-panel collapsible-panel ${isTargetPanelOpen ? 'open' : ''}`} aria-expanded={isTargetPanelOpen}>
             <button className="collapsible-heading" type="button" aria-expanded={isTargetPanelOpen} onClick={toggleTargetPanel}>

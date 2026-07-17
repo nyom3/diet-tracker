@@ -1,6 +1,7 @@
 import React from 'react';
-import { ChevronDown, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
-import type { DashboardData, DashboardDay, DashboardRangeDays } from '../types';
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Loader2, Sparkles } from 'lucide-react';
+import { acceptCoachAction, generateCoachInsight } from '../gasClient';
+import type { CoachEvidence, CoachInsight, DashboardData, DashboardDay, DashboardRangeDays } from '../types';
 import {
   buildMetricPoints,
   calculateRollingAverage,
@@ -25,6 +26,7 @@ type TrendViewProps = {
   rangeDays: DashboardRangeDays;
   onRangeChange: (rangeDays: DashboardRangeDays) => void;
   onRetry: () => void;
+  onActionAccepted: () => Promise<boolean>;
   children?: React.ReactNode;
 };
 
@@ -66,9 +68,13 @@ const chartColors = {
   baseline: '#64748b',
 };
 
-export function TrendView({ data, status, rangeDays, onRangeChange, onRetry, children }: TrendViewProps): JSX.Element {
+export function TrendView({ data, status, rangeDays, onRangeChange, onRetry, onActionAccepted, children }: TrendViewProps): JSX.Element {
   const [selectedDate, setSelectedDate] = React.useState('');
   const [pfcMetric, setPfcMetric] = React.useState<PfcMetric>('protein_g');
+  const [coachInsight, setCoachInsight] = React.useState<CoachInsight | null>(null);
+  const [coachStatus, setCoachStatus] = React.useState<ResourceStatus>('loaded');
+  const [coachError, setCoachError] = React.useState('');
+  const [actionAccepted, setActionAccepted] = React.useState(false);
 
   React.useEffect(() => {
     if (!data) {
@@ -78,6 +84,13 @@ export function TrendView({ data, status, rangeDays, onRangeChange, onRetry, chi
       return normalizeSelectedDate(data.days.map((day) => day.date), current);
     });
   }, [data]);
+
+  React.useEffect(() => {
+    setCoachInsight(null);
+    setCoachStatus('loaded');
+    setCoachError('');
+    setActionAccepted(false);
+  }, [rangeDays]);
 
   const selectedDay = data?.days.find((day) => day.date === selectedDate) ?? data?.days[data.days.length - 1] ?? null;
   const selectedIndex = data && selectedDay ? data.days.findIndex((day) => day.date === selectedDay.date) : -1;
@@ -89,6 +102,39 @@ export function TrendView({ data, status, rangeDays, onRangeChange, onRetry, chi
       return;
     }
     setSelectedDate(getAdjacentDate(data.days.map((day) => day.date), selectedDay?.date ?? '', amount));
+  }
+
+  async function handleGenerateCoachInsight(): Promise<void> {
+    if (!data) {
+      return;
+    }
+    setCoachStatus('loading');
+    setCoachError('');
+    try {
+      setCoachInsight(await generateCoachInsight({ scope: 'trend', range_days: rangeDays }));
+      setCoachStatus('loaded');
+    } catch (error) {
+      setCoachStatus('error');
+      setCoachError(error instanceof Error ? error.message : 'AI分析を取得できませんでした。');
+    }
+  }
+
+  async function handleAcceptCoachAction(): Promise<void> {
+    const selectedAction = coachInsight?.selected_action;
+    if (!selectedAction || actionAccepted) {
+      return;
+    }
+    setCoachStatus('loading');
+    setCoachError('');
+    try {
+      await acceptCoachAction({ scope: 'trend', range_days: rangeDays, action_key: selectedAction.key });
+      setActionAccepted(true);
+      setCoachStatus('loaded');
+      await onActionAccepted();
+    } catch (error) {
+      setCoachStatus('error');
+      setCoachError(error instanceof Error ? error.message : '行動を開始できませんでした。');
+    }
   }
 
   return (
@@ -169,6 +215,29 @@ export function TrendView({ data, status, rangeDays, onRangeChange, onRetry, chi
         )}
       </section>
 
+      <section className="panel coach-insight-panel" aria-labelledby="coach-insight-heading">
+        <div className="section-heading">
+          <div>
+            <span className="section-label">根拠付きコーチ</span>
+            <h2 id="coach-insight-heading">この期間をAIで分析</h2>
+          </div>
+          <button
+            className="action-button primary-action coach-insight-button"
+            type="button"
+            disabled={!data || coachStatus === 'loading'}
+            onClick={() => void handleGenerateCoachInsight()}
+          >
+            {coachStatus === 'loading' ? <Loader2 className="spin" size={18} /> : <Sparkles size={18} />}
+            分析する
+          </button>
+        </div>
+        {coachStatus === 'loading' && <p className="coach-insight-status" role="status">分析中です。少しお待ちください。</p>}
+        {coachStatus === 'error' && <p className="coach-insight-status error" role="alert">{coachError}</p>}
+        {coachInsight && coachStatus !== 'loading' && (
+          <CoachInsightPanel insight={coachInsight} actionAccepted={actionAccepted} onAccept={() => void handleAcceptCoachAction()} />
+        )}
+      </section>
+
       {children}
 
       {status === 'loading' && !data && (
@@ -199,6 +268,64 @@ export function TrendView({ data, status, rangeDays, onRangeChange, onRetry, chi
       )}
     </main>
   );
+}
+
+function CoachInsightPanel({
+  insight,
+  actionAccepted,
+  onAccept,
+}: {
+  insight: CoachInsight;
+  actionAccepted: boolean;
+  onAccept: () => void;
+}): JSX.Element {
+  return (
+    <div className="coach-insight-content" aria-live="polite">
+      <p className="coach-insight-source">{insight.source === 'ai' ? 'AI分析' : 'ルールベースの案内'}・確度{confidenceLabel(insight.confidence)}</p>
+      <h3>{insight.headline}</h3>
+      <p>{insight.summary}</p>
+      {insight.fallback_notice && <p className="coach-insight-fallback">{insight.fallback_notice}</p>}
+      {insight.evidence.length > 0 && (
+        <div>
+          <span className="section-label">根拠</span>
+          <ul className="coach-evidence-list">
+            {insight.evidence.map((evidence) => <CoachEvidenceRow key={evidence.key} evidence={evidence} />)}
+          </ul>
+        </div>
+      )}
+      {insight.selected_action && (
+        <div className="coach-selected-action">
+          <div>
+            <span className="section-label">選択された行動</span>
+            <strong>{insight.selected_action.text}</strong>
+          </div>
+          <button className="action-button secondary-action" type="button" disabled={actionAccepted} onClick={onAccept}>
+            {actionAccepted ? <Check size={18} /> : null}
+            {actionAccepted ? '開始済み' : 'この行動を始める'}
+          </button>
+        </div>
+      )}
+      {insight.alternative_action && (
+        <p className="coach-alternative-action"><span className="section-label">別の候補</span>{insight.alternative_action.text}</p>
+      )}
+    </div>
+  );
+}
+
+function CoachEvidenceRow({ evidence }: { evidence: CoachEvidence }): JSX.Element {
+  const value = `${formatEvidenceNumber(evidence.value)} ${evidence.unit}`;
+  const comparison = evidence.comparison_value === null
+    ? ''
+    : `（${evidence.comparison_label || '比較'} ${formatEvidenceNumber(evidence.comparison_value)} ${evidence.unit}）`;
+  return <li><span>{evidence.label}</span><strong>{value}{comparison}</strong></li>;
+}
+
+function formatEvidenceNumber(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function confidenceLabel(value: DashboardData['confidence']['nutrition']): string {
+  return value === 'high' ? '高' : value === 'medium' ? '中' : '低';
 }
 
 function ConfidenceBadge({ label, value }: { label: string; value: DashboardData['confidence']['nutrition'] }): JSX.Element {
