@@ -184,7 +184,7 @@ function callGeminiJson(promptText, thinkingLevel) {
       response_mime_type: 'application/json',
       thinkingConfig: { thinkingLevel: thinkingLevel || 'low' },
     },
-  });
+  }, 'coach-json');
   var payload = JSON.parse(geminiResponse.body);
   var parts = (
     payload.candidates &&
@@ -208,22 +208,38 @@ function callGeminiJson(promptText, thinkingLevel) {
 function runAiJson(promptText, thinkingLevel) {
   var openAiAttempt = tryOpenAiCoachJsonRequest(promptText, thinkingLevel);
   if (openAiAttempt.ok) {
-    return { ok: true, text: openAiAttempt.text, fallback_notice: '' };
+    return { ok: true, text: openAiAttempt.text, fallback_notice: '', provider: 'openai' };
   }
 
+  var geminiStartedAt = Date.now();
   try {
     var geminiResult = callGeminiJson(promptText, thinkingLevel);
     return {
       ok: true,
       text: geminiResult.text,
       fallback_notice: buildFallbackNotice(openAiAttempt.reason, geminiResult.fallback_notice),
+      provider: 'gemini',
     };
   } catch (error) {
     var geminiReason = error && error.message ? String(error.message) : 'Gemini APIの応答を取得できませんでした。';
+    var geminiLogReason = error && error.statusCode
+      ? 'Gemini API が HTTP ' + Number(error.statusCode) + ' を返しました。'
+      : 'Gemini API への接続に失敗しました。';
+    recordAiCallLog({
+      outcome: 'failure',
+      provider: 'gemini',
+      stage: 'gemini_error',
+      request_kind: 'coach-json',
+      model: GEMINI_MODEL,
+      status_code: error && error.statusCode,
+      duration_ms: Date.now() - geminiStartedAt,
+      reason: geminiLogReason,
+    });
     return {
       ok: false,
       reason: buildFallbackNotice(openAiAttempt.reason, geminiReason),
       fallback_notice: '',
+      provider: 'gemini',
     };
   }
 }
@@ -257,18 +273,31 @@ function buildFallbackNotice(openAiReason, geminiFallbackNotice) {
 // 予約→(ロック外で)OpenAI呼び出し→実績反映、を一通り行う。
 // 戻り値: { ok: true, text } または { ok: false, reason }
 function attemptOpenAiChat(request) {
+  var startedAt = Date.now();
+  var model = OPENAI_MODEL_BY_GROUP[request.group] || '';
   var apiKey = PropertiesService.getScriptProperties().getProperty('OPENAI_API_KEY');
   if (!apiKey) {
-    return recordAndReturnBlocked('OPENAI_API_KEY が設定されていません。');
+    return recordAndReturnBlocked('OPENAI_API_KEY が設定されていません。', {
+      stage: 'openai_gate',
+      request_kind: request.requestKind,
+      group: request.group,
+      model: model,
+      duration_ms: Date.now() - startedAt,
+    });
   }
 
   var mode = getAiProviderMode();
   var reservation = reserveOpenAiBudget(mode, request.group, request.reservationTokens);
   if (!reservation.allowed) {
-    return recordAndReturnBlocked(reservation.reason);
+    return recordAndReturnBlocked(reservation.reason, {
+      stage: 'openai_gate',
+      request_kind: request.requestKind,
+      group: request.group,
+      model: model,
+      duration_ms: Date.now() - startedAt,
+    });
   }
 
-  var model = OPENAI_MODEL_BY_GROUP[request.group];
   var response;
   try {
     response = fetchOpenAiChat(apiKey, model, request.messages, {
@@ -278,12 +307,26 @@ function attemptOpenAiChat(request) {
     });
   } catch (networkError) {
     commitOpenAiUsage(request.group, request.reservationTokens, 0, false);
-    return recordAndReturnBlocked('OpenAI API への接続に失敗しました。');
+    return recordAndReturnBlocked('OpenAI API への接続に失敗しました。', {
+      stage: 'openai_network',
+      request_kind: request.requestKind,
+      group: request.group,
+      model: model,
+      duration_ms: Date.now() - startedAt,
+    });
   }
 
   if (response.statusCode < 200 || response.statusCode >= 300) {
     commitOpenAiUsage(request.group, request.reservationTokens, 0, false);
-    return recordAndReturnBlocked(describeOpenAiApiError(response));
+    var apiErrorContext = {
+      stage: 'openai_http',
+      request_kind: request.requestKind,
+      group: request.group,
+      model: model,
+      status_code: response.statusCode,
+      duration_ms: Date.now() - startedAt,
+    };
+    return recordAndReturnBlocked(describeOpenAiApiError(response, apiErrorContext), apiErrorContext);
   }
 
   var payload;
@@ -291,7 +334,14 @@ function attemptOpenAiChat(request) {
     payload = JSON.parse(response.body);
   } catch (parseError) {
     commitOpenAiUsage(request.group, request.reservationTokens, 0, false);
-    return recordAndReturnBlocked('OpenAI API の応答を解析できませんでした。');
+    return recordAndReturnBlocked('OpenAI API の応答を解析できませんでした。', {
+      stage: 'openai_parse',
+      request_kind: request.requestKind,
+      group: request.group,
+      model: model,
+      status_code: response.statusCode,
+      duration_ms: Date.now() - startedAt,
+    });
   }
 
   var choice = payload.choices && payload.choices[0];
@@ -300,26 +350,59 @@ function attemptOpenAiChat(request) {
 
   if (!text) {
     commitOpenAiUsage(request.group, request.reservationTokens, totalTokens, false);
-    return recordAndReturnBlocked('OpenAI API の応答が空です。');
+    return recordAndReturnBlocked('OpenAI API の応答が空です。', {
+      stage: 'openai_empty',
+      request_kind: request.requestKind,
+      group: request.group,
+      model: model,
+      status_code: response.statusCode,
+      duration_ms: Date.now() - startedAt,
+    });
   }
 
   commitOpenAiUsage(request.group, request.reservationTokens, totalTokens, true);
   recordLastOpenAiUsage(payload.usage, request.requestKind, model, totalTokens);
   clearFallbackReason();
+  recordAiCallLog({
+    outcome: 'success',
+    provider: 'openai',
+    stage: 'openai_success',
+    request_kind: request.requestKind,
+    group: request.group,
+    model: model,
+    status_code: response.statusCode,
+    duration_ms: Date.now() - startedAt,
+    reason: '',
+  });
   return { ok: true, text: String(text).trim() };
 }
 
 // 応答本文はキー断片などを含む可能性があるため画面へ返さず、401だけを安全な原因別メッセージにする。
-function describeOpenAiApiError(response) {
+function describeOpenAiApiError(response, outContext) {
+  if (outContext && typeof outContext === 'object') {
+    outContext.status_code = response.statusCode;
+  }
+
+  var payload = null;
+  try {
+    payload = JSON.parse(response.body);
+    var structuredError = payload && payload.error;
+    if (outContext && structuredError) {
+      outContext.error_code = structuredError.code;
+      outContext.error_type = structuredError.type;
+    }
+  } catch (parseError) {
+    payload = null;
+  }
+
   if (response.statusCode !== 401) {
     return 'OpenAI API の呼び出しに失敗しました。status=' + response.statusCode;
   }
 
   var errorMessage = '';
   try {
-    var payload = JSON.parse(response.body);
     errorMessage = String(payload && payload.error && payload.error.message || '').toLowerCase();
-  } catch (parseError) {
+  } catch (messageError) {
     // 401で本文がJSONでない場合も、認証エラーとして安全な汎用メッセージを返す。
   }
 
@@ -332,8 +415,22 @@ function describeOpenAiApiError(response) {
   return 'OpenAI API の認証に失敗しました。OPENAI_API_KEY の有効性を確認してください。';
 }
 
-function recordAndReturnBlocked(reason) {
+function recordAndReturnBlocked(reason, context) {
   recordFallbackReason(reason);
+  var source = context && typeof context === 'object' ? context : {};
+  recordAiCallLog({
+    outcome: 'fallback',
+    provider: 'openai',
+    stage: source.stage || 'openai_blocked',
+    request_kind: source.request_kind,
+    group: source.group,
+    model: source.model,
+    status_code: source.status_code,
+    error_code: source.error_code,
+    error_type: source.error_type,
+    duration_ms: source.duration_ms,
+    reason: reason,
+  });
   return { ok: false, reason: reason };
 }
 

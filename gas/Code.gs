@@ -49,6 +49,22 @@ const COACH_ACTION_CATEGORIES = ['logging', 'energy', 'protein', 'macro_balance'
 const COACH_ACTION_STATUSES = ['planned', 'completed', 'dismissed'];
 const COACH_ACTION_MAX_TEXT_LENGTH = 200;
 const COACH_ACTION_MAX_EVIDENCE_LENGTH = 5000;
+const AI_CALL_LOG_SHEET_NAME = 'ai_call_log';
+const AI_CALL_LOG_HEADERS = [
+  'timestamp',
+  'outcome',
+  'provider',
+  'stage',
+  'request_kind',
+  'group',
+  'model',
+  'status_code',
+  'error_code',
+  'error_type',
+  'duration_ms',
+  'reason',
+];
+const AI_CALL_LOG_MAX_DATA_ROWS = 2000;
 const MIN_VALID_WEIGHT_KG = 20;
 const MAX_VALID_WEIGHT_KG = 300;
 const MAX_AI_IMAGE_BYTES = Math.floor(1.5 * 1024 * 1024);
@@ -502,19 +518,40 @@ function generateCoachInsight(request) {
   const aiResult = runAiJson(prompt, 'low');
 
   if (!aiResult || !aiResult.ok) {
-    return buildCoachRulesFallback(rulesInsight, 'AIを利用できないため、ルール結果を表示しました。', aiResult && aiResult.reason);
+    return buildCoachRulesFallback(
+      rulesInsight,
+      'AIを利用できないため、ルール結果を表示しました。',
+      aiResult && aiResult.reason,
+      { stage: 'coach_provider_fallback', provider: aiResult && aiResult.provider, request_kind: 'coach-json', reason: 'coach_provider_fallback' },
+    );
   }
 
   let aiResponse;
   try {
     aiResponse = JSON.parse(extractJson(aiResult.text));
   } catch (error) {
-    return buildCoachRulesFallback(rulesInsight, 'AIの応答を確認できないため、ルール結果を表示しました。', aiResult.fallback_notice);
+    return buildCoachRulesFallback(
+      rulesInsight,
+      'AIの応答を確認できないため、ルール結果を表示しました。',
+      aiResult.fallback_notice,
+      { stage: 'coach_json_parse', provider: aiResult.provider, request_kind: 'coach-json', reason: 'coach_json_parse_failed' },
+    );
   }
 
-  const validated = validateCoachAiResponse(candidatePairs, aiResponse);
+  const validationContext = {};
+  const validated = validateCoachAiResponse(candidatePairs, aiResponse, validationContext);
   if (!validated) {
-    return buildCoachRulesFallback(rulesInsight, 'AIの応答を確認できないため、ルール結果を表示しました。', aiResult.fallback_notice);
+    return buildCoachRulesFallback(
+      rulesInsight,
+      'AIの応答を確認できないため、ルール結果を表示しました。',
+      aiResult.fallback_notice,
+      {
+        stage: 'coach_response_rejected',
+        provider: aiResult.provider,
+        request_kind: 'coach-json',
+        reason: 'coach_response_rejected:' + (validationContext.reject_reason || 'unknown'),
+      },
+    );
   }
 
   const selectedPair = candidatePairs.filter(function (pair) {
@@ -665,8 +702,16 @@ function buildCoachGoalGaps(values, goals) {
   return result;
 }
 
-function buildCoachRulesFallback(rulesInsight, notice, providerNotice) {
+function buildCoachRulesFallback(rulesInsight, notice, providerNotice, logContext) {
   const notices = [notice, providerNotice].filter(function (value) { return value; });
+  const context = logContext && typeof logContext === 'object' ? logContext : {};
+  recordAiCallLog({
+    outcome: 'fallback',
+    provider: context.provider,
+    stage: context.stage || 'coach_rules_fallback',
+    request_kind: context.request_kind || 'coach-json',
+    reason: context.reason || notice,
+  });
   return {
     generated_at: rulesInsight.generated_at,
     scope: rulesInsight.scope,
@@ -951,7 +996,7 @@ function estimateCalories(inputText, imageBase64, imageMimeType, imageWidthPx, i
         thinkingLevel: 'low',
       },
     },
-  });
+  }, image ? 'vision' : 'text-estimate');
 
   const payload = JSON.parse(geminiResponse.body);
   const allParts = (
@@ -1002,7 +1047,7 @@ function callGeminiText(prompt, thinkingLevel) {
         thinkingLevel: thinkingLevel || 'low',
       },
     },
-  });
+  }, 'text');
 
   const payload = JSON.parse(geminiResponse.body);
   const allParts = (
@@ -1024,10 +1069,21 @@ function callGeminiText(prompt, thinkingLevel) {
   };
 }
 
-function fetchGeminiWithFallback(apiKey, payload) {
+function fetchGeminiWithFallback(apiKey, payload, requestKind) {
+  const startedAt = Date.now();
   const primaryResponse = fetchGemini(apiKey, GEMINI_MODEL, payload);
 
   if (isSuccessfulGeminiResponse(primaryResponse.statusCode)) {
+    recordAiCallLog({
+      outcome: 'success',
+      provider: 'gemini',
+      stage: 'gemini_success',
+      request_kind: requestKind,
+      model: GEMINI_MODEL,
+      status_code: primaryResponse.statusCode,
+      duration_ms: Date.now() - startedAt,
+      reason: '',
+    });
     return { body: primaryResponse.body, usedFallback: false };
   }
 
@@ -1039,13 +1095,27 @@ function fetchGeminiWithFallback(apiKey, payload) {
     );
 
     if (isSuccessfulGeminiResponse(fallbackResponse.statusCode)) {
+      recordAiCallLog({
+        outcome: 'fallback',
+        provider: 'gemini',
+        stage: 'gemini_degraded_retry',
+        request_kind: requestKind,
+        model: GEMINI_FALLBACK_MODEL,
+        status_code: fallbackResponse.statusCode,
+        duration_ms: Date.now() - startedAt,
+        reason: 'Gemini primary model failed; degraded retry succeeded.',
+      });
       return { body: fallbackResponse.body, usedFallback: true };
     }
 
-    throw new Error('Gemini API の呼び出しに失敗しました。status=' + fallbackResponse.statusCode);
+    const fallbackError = new Error('Gemini API の呼び出しに失敗しました。status=' + fallbackResponse.statusCode);
+    fallbackError.statusCode = fallbackResponse.statusCode;
+    throw fallbackError;
   }
 
-  throw new Error('Gemini API の呼び出しに失敗しました。status=' + primaryResponse.statusCode);
+  const primaryError = new Error('Gemini API の呼び出しに失敗しました。status=' + primaryResponse.statusCode);
+  primaryError.statusCode = primaryResponse.statusCode;
+  throw primaryError;
 }
 
 function fetchGemini(apiKey, model, payload) {
@@ -1150,6 +1220,67 @@ function getCoachActionsSheet() {
   }
 
   return sheet;
+}
+
+function getAiCallLogSheet() {
+  const spreadsheet = getSpreadsheet();
+  const sheet = spreadsheet.getSheetByName(AI_CALL_LOG_SHEET_NAME)
+    || spreadsheet.insertSheet(AI_CALL_LOG_SHEET_NAME);
+  const headerRange = sheet.getRange(1, 1, 1, AI_CALL_LOG_HEADERS.length);
+  const headers = headerRange.getValues()[0];
+  const shouldWriteHeaders = AI_CALL_LOG_HEADERS.some(function (header, index) {
+    return headers[index] !== header;
+  });
+
+  if (shouldWriteHeaders) {
+    headerRange.setValues([AI_CALL_LOG_HEADERS]);
+  }
+
+  return sheet;
+}
+
+function recordAiCallLog(entry) {
+  try {
+    const source = entry && typeof entry === 'object' ? entry : {};
+    const allowedOutcomes = ['success', 'fallback', 'failure'];
+    const allowedProviders = ['openai', 'gemini'];
+    const outcome = allowedOutcomes.indexOf(source.outcome) !== -1 ? source.outcome : 'failure';
+    const provider = allowedProviders.indexOf(source.provider) !== -1 ? source.provider : 'gemini';
+    const statusCode = Number(source.status_code);
+    const durationMs = Number(source.duration_ms);
+    const sheet = getAiCallLogSheet();
+    sheet.appendRow([
+      new Date().toISOString(),
+      outcome,
+      provider,
+      limitAiLogText(source.stage, 80),
+      limitAiLogText(source.request_kind, 80),
+      limitAiLogText(source.group, 40),
+      limitAiLogText(source.model, 120),
+      isFinite(statusCode) ? statusCode : '',
+      sanitizeAiLogCode(source.error_code),
+      sanitizeAiLogCode(source.error_type),
+      isFinite(durationMs) && durationMs >= 0 ? Math.round(durationMs) : '',
+      limitAiLogText(source.reason, 500),
+    ]);
+
+    const lastRow = sheet.getLastRow();
+    const excessRows = lastRow - 1 - AI_CALL_LOG_MAX_DATA_ROWS;
+    if (excessRows > 0) {
+      sheet.deleteRows(2, excessRows);
+    }
+  } catch (error) {
+    // Observability must never break the AI request or its existing fallback.
+  }
+}
+
+function limitAiLogText(value, maxLength) {
+  return String(value || '').trim().slice(0, maxLength);
+}
+
+function sanitizeAiLogCode(value) {
+  const normalized = String(value || '').trim();
+  return /^[A-Za-z0-9_.-]{1,100}$/.test(normalized) ? normalized : '';
 }
 
 function getSpreadsheet() {

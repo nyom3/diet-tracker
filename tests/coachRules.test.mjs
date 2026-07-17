@@ -165,6 +165,33 @@ test('AI応答は未知キー、組み合わせ不一致、長さ超過、数字
   assert.equal(coach.validateCoachAiResponse(candidates, null), null);
 });
 
+test('AI応答の拒否理由を第3引数へ分類し、既存のnull戻り値を維持する', () => {
+  const valid = {
+    headline: '見出し',
+    summary: '数字を含まない説明です。',
+    evidence_key: 'today_next_meal',
+    action_key: 'logging',
+  };
+  const candidate = [{ evidence_key: valid.evidence_key, action_key: valid.action_key }];
+  const cases = [
+    [[], valid, 'empty_candidates'],
+    [candidate, null, 'response_not_object'],
+    [candidate, { ...valid, extra: true }, 'unknown_keys'],
+    [candidate, { ...valid, evidence_key: '', action_key: '' }, 'missing_selection'],
+    [candidate, { ...valid, action_key: 'activity' }, 'candidate_mismatch'],
+    [candidate, { ...valid, headline: 'あ'.repeat(41) }, 'headline_invalid'],
+    [candidate, { ...valid, summary: 'あ'.repeat(161) }, 'summary_length_invalid'],
+    [candidate, { ...valid, summary: '数字300を含む' }, 'summary_empty_or_numeric'],
+  ];
+
+  cases.forEach(([candidates, response, expected]) => {
+    const context = {};
+    assert.equal(coach.validateCoachAiResponse(candidates, response, context), null);
+    assert.equal(context.reject_reason, expected);
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(coach.validateCoachAiResponse(candidate, valid))), valid, '第3引数なしの既存呼び出しは成功応答を維持する');
+});
+
 test('buildCoachInsightはrules由来の主候補と代替候補を返す', () => {
   const days = makeDays();
   const insight = coach.buildCoachInsight('trend', days, goals, days.at(-1));
