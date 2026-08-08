@@ -257,6 +257,36 @@ test('generateCoachInsightはscopeを渡し、欠落配列・nullable・負の�
   }
 });
 
+test('generateCoachInsightはfocusを渡し、未指定のnullable focusはRPC payloadから落とす', async () => {
+  const previousWindow = globalThis.window;
+  const requests = [];
+  const runner = {
+    withSuccessHandler(handler) {
+      this.successHandler = handler;
+      return this;
+    },
+    withFailureHandler() {
+      return this;
+    },
+    generateCoachInsight(request) {
+      requests.push(request);
+      this.successHandler({ scope: 'trend', evidence: [] });
+    },
+  };
+
+  globalThis.window = { google: { script: { run: runner } } };
+  try {
+    await gasClient.generateCoachInsight({ scope: 'trend', range_days: 30, focus: 'weight' });
+    await gasClient.generateCoachInsight({ scope: 'trend', range_days: 30, focus: null });
+    assert.deepEqual(requests, [
+      { scope: 'trend', range_days: 30, focus: 'weight' },
+      { scope: 'trend', range_days: 30 },
+    ]);
+  } finally {
+    globalThis.window = previousWindow;
+  }
+});
+
 test('acceptCoachAction/setCoachActionStatusは専用RPCを呼び、CoachActionを正規化する', async () => {
   const previousWindow = globalThis.window;
   const calls = [];

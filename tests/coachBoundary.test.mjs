@@ -181,5 +181,7 @@ test('scopeと期間をサーバー境界で検証する', () => {
   const { context } = createContext();
   assert.throws(() => context.generateCoachInsight({ scope: 'unknown' }), /対象が不正/);
   assert.throws(() => context.generateCoachInsight({ scope: 'trend', range_days: 14 }), /期間は7、30、90/);
+  assert.throws(() => context.generateCoachInsight({ scope: 'trend', range_days: 30, focus: 'unknown' }), /観点が不正/);
+  assert.doesNotThrow(() => context.generateCoachInsight({ scope: 'trend', range_days: 30, focus: 'weight' }));
   assert.doesNotThrow(() => context.generateCoachInsight({ scope: 'today', range_days: 90 }));
 });

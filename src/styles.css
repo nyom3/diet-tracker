@@ -1128,6 +1128,26 @@ h2 {
   align-items: flex-start;
 }
 
+.chart-heading-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.chart-coach-button {
+  min-height: 44px;
+  white-space: nowrap;
+}
+
+.chart-coach-result {
+  display: grid;
+  gap: 6px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
 .chart-frame {
   width: 100%;
   min-width: 0;
@@ -2045,7 +2065,8 @@ h2 {
   }
 
   .trend-range-row,
-  .chart-heading {
+  .chart-heading,
+  .chart-heading-actions {
     align-items: stretch;
     flex-direction: column;
   }
@@ -2061,7 +2082,8 @@ h2 {
   }
 
   .range-switch button,
-  .metric-switch button {
+  .metric-switch button,
+  .chart-coach-button {
     width: 100%;
   }
 

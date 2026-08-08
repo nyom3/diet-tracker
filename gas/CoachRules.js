@@ -7,6 +7,13 @@ var COACH_PRIORITY = [
   'activity',
   'progress',
 ];
+var COACH_FOCUS_TO_EVIDENCE = {
+  logging: ['data_quality'],
+  weight: ['weight_trend', 'progress'],
+  energy: ['energy_pattern'],
+  macros: ['protein'],
+  activity: ['activity'],
+};
 var COACH_CONFIDENCE_RANK = { low: 0, medium: 1, high: 2 };
 var COACH_MAIN_MEALS = ['朝', '昼', '夜'];
 var COACH_MACROS = [
@@ -20,7 +27,7 @@ var COACH_MACROS = [
  * DashboardMetrics.js is loaded before this file in GAS and in the Node VM
  * tests, so confidence calculation stays in one source of truth.
  */
-function buildCoachEvidence(scope, days, goals, today) {
+function buildCoachEvidence(scope, days, goals, today, focus) {
   var context = createCoachContext(scope, days, goals, today);
   var builders = {
     data_quality: buildCoachDataQualityEvidence,
@@ -31,7 +38,9 @@ function buildCoachEvidence(scope, days, goals, today) {
     activity: buildCoachActivityEvidence,
     progress: buildCoachProgressEvidence,
   };
-  var allowed = scope === 'today' ? ['data_quality', 'today_next_meal'] : COACH_PRIORITY;
+  var allowed = focus && COACH_FOCUS_TO_EVIDENCE[focus]
+    ? COACH_FOCUS_TO_EVIDENCE[focus]
+    : scope === 'today' ? ['data_quality', 'today_next_meal'] : COACH_PRIORITY;
 
   return allowed.map(function (type) {
     return builders[type](context);
@@ -143,7 +152,7 @@ function validateCoachAiResponse(candidates, aiResponse, outContext) {
     return rejectCoachAiResponse(outContext, 'missing_selection');
   }
 
-  var matchingCandidate = candidates.some(function (candidate) {
+  var matchingCandidate = candidates.filter(function (candidate) {
     var candidateEvidenceKey = coachResponseKey(candidate, 'evidence_key', 'evidenceKey');
     var candidateActionKey = coachResponseKey(candidate, 'action_key', 'actionKey');
     if ((!candidateEvidenceKey || !candidateActionKey) && candidate) {
@@ -151,7 +160,7 @@ function validateCoachAiResponse(candidates, aiResponse, outContext) {
       candidateActionKey = candidate.action && candidate.action.key;
     }
     return candidateEvidenceKey === evidenceKey && candidateActionKey === actionKey;
-  });
+  })[0] || null;
   if (!matchingCandidate) {
     return rejectCoachAiResponse(outContext, 'candidate_mismatch');
   }
@@ -162,7 +171,21 @@ function validateCoachAiResponse(candidates, aiResponse, outContext) {
   if (typeof aiResponse.summary !== 'string' || aiResponse.summary.length > 160) {
     return rejectCoachAiResponse(outContext, 'summary_length_invalid');
   }
-  if (aiResponse.summary === '' || /[0-9０-９]/.test(aiResponse.summary)) {
+  if (aiResponse.summary === '') {
+    return rejectCoachAiResponse(outContext, 'summary_empty_or_numeric');
+  }
+  var summaryNumbers = extractCoachSummaryNumbers(aiResponse.summary);
+  var allowedNumbers = (matchingCandidate.evidence || []).reduce(function (values, evidence) {
+    [evidence.value, evidence.comparison_value].forEach(function (value) {
+      if (typeof value === 'number' && isFinite(value)) {
+        values.push(Math.abs(value));
+      }
+    });
+    return values;
+  }, []);
+  if (summaryNumbers.some(function (value) {
+    return allowedNumbers.indexOf(Math.abs(value)) === -1;
+  })) {
     return rejectCoachAiResponse(outContext, 'summary_empty_or_numeric');
   }
 
@@ -181,9 +204,9 @@ function rejectCoachAiResponse(outContext, reason) {
   return null;
 }
 
-function buildCoachInsight(scope, days, goals, today) {
+function buildCoachInsight(scope, days, goals, today, focus) {
   var context = createCoachContext(scope, days, goals, today);
-  var suggestions = buildCoachEvidence(scope, days, goals, today);
+  var suggestions = buildCoachEvidence(scope, days, goals, today, focus);
   var actions = buildCoachActionCandidates(days, goals, today);
   var pairs = buildCoachCandidatePairs(suggestions, actions);
   var selectedPair = pairs.length > 0 ? pairs[0] : null;
@@ -196,13 +219,68 @@ function buildCoachInsight(scope, days, goals, today) {
     generated_at: context.date + 'T00:00:00.000+09:00',
     scope: scope === 'trend' ? 'trend' : 'today',
     source: 'rules',
-    headline: coachHeadline(selectedPair && selectedPair.type),
-    summary: coachSummary(selectedPair && selectedPair.type),
+    headline: focus && pairs.length === 0 ? coachFocusNoEvidenceHeadline(focus, context) : coachHeadline(selectedPair && selectedPair.type),
+    summary: focus && pairs.length === 0 ? coachFocusNoEvidenceSummary(focus, context) : coachSummary(selectedPair && selectedPair.type),
     confidence: selectedPair ? selectedPair.confidence : 'low',
     evidence: selectedSuggestion ? selectedSuggestion.evidence : [],
     selected_action: selectedPair ? selectedPair.action : null,
     alternative_action: alternativePair ? alternativePair.action : null,
   };
+}
+
+function extractCoachSummaryNumbers(summary) {
+  var normalized = String(summary || '')
+    .replace(/[０-９]/g, function (character) { return String.fromCharCode(character.charCodeAt(0) - '０'.charCodeAt(0) + '0'.charCodeAt(0)); })
+    .replace(/．/g, '.')
+    .replace(/－/g, '-')
+    .replace(/＋/g, '+');
+  normalized = normalized.replace(/([0-9])[,，]([0-9])/g, '$1$2');
+  var matches = normalized.match(/[+-]?(?:\d+(?:\.\d*)?|\.\d+)/g) || [];
+  return matches.map(function (value) { return Number(value); }).filter(function (value) { return isFinite(value); });
+}
+
+function coachFocusHasEnoughData(focus, context) {
+  if (focus === 'logging') {
+    return context.confidence.nutrition !== 'low';
+  }
+  if (focus === 'weight') {
+    return context.days.length >= 14 && context.days.filter(function (day) { return day.weight_kg !== null; }).length >= 2;
+  }
+  if (focus === 'energy') {
+    return context.days.filter(function (day) {
+      return day.coverage.adequate && day.expenditure_kcal !== null;
+    }).length >= 2;
+  }
+  if (focus === 'macros') {
+    return context.goals.protein_g !== null && context.goals.protein_g > 0
+      && context.days.filter(function (day) { return day.meal_count > 0; }).length >= 2;
+  }
+  if (focus === 'activity') {
+    return getCoachRecentActivity(context.days).observedDays >= 5;
+  }
+  return false;
+}
+
+function coachFocusNoEvidenceHeadline(focus, context) {
+  return coachFocusHasEnoughData(focus, context)
+    ? coachFocusLabel(focus) + 'の追加案内はありません'
+    : coachFocusLabel(focus) + 'のデータが不足しています';
+}
+
+function coachFocusNoEvidenceSummary(focus, context) {
+  return coachFocusHasEnoughData(focus, context)
+    ? 'この期間はこの観点で追加の行動案内がありません。記録の傾向をそのまま確認できます。'
+    : 'この観点を分析するには、もう少し記録が必要です。';
+}
+
+function coachFocusLabel(focus) {
+  return {
+    logging: '記録',
+    weight: '体重',
+    energy: 'エネルギー',
+    macros: 'PFC',
+    activity: '活動',
+  }[focus] || '指定した観点';
 }
 
 function createCoachContext(scope, days, goals, today) {

@@ -180,13 +180,15 @@ export function getDaySnapshot(date: string): Promise<DaySnapshot> {
 
 export function generateCoachInsight(request: GenerateCoachInsightRequest): Promise<CoachInsight> {
   return callGas<Partial<CoachInsight>>((runner) => {
-    runner.generateCoachInsight(request);
+    runner.generateCoachInsight(request.focus == null ? { scope: request.scope, range_days: request.range_days } : request);
   }).then((result) => normalizeCoachInsight(result, '1970-01-01'));
 }
 
 export function acceptCoachAction(payload: AcceptCoachActionPayload): Promise<CoachAction> {
   return callGas<CoachAction>((runner) => {
-    runner.acceptCoachAction(payload);
+    runner.acceptCoachAction(payload.focus == null
+      ? { scope: payload.scope, range_days: payload.range_days, action_key: payload.action_key }
+      : payload);
   }).then(normalizeCoachActionResult);
 }
 
