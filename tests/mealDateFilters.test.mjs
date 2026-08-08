@@ -42,3 +42,72 @@ test('日付キーは実在日かつ指定した最新日以前だけを許可�
   assert.equal(filters.isDateKeyNotAfter('2026-08-07', '2026-08-08'), true);
   assert.equal(filters.isDateKeyNotAfter('2026-08-09', '2026-08-08'), false);
 });
+
+test('食事ログの範囲は末尾から行数ベースで広げ、日時の古さでは停止しない', () => {
+  const firstRange = filters.resolveFoodLogReadRange(1001, 0, {
+    initialRows: 500,
+    growthFactor: 4,
+  });
+  assert.equal(firstRange.startRow, 502);
+  assert.equal(firstRange.rowCount, 500);
+  assert.equal(firstRange.isFull, false);
+
+  const secondRange = filters.resolveFoodLogReadRange(1001, 1, {
+    initialRows: 500,
+    growthFactor: 4,
+  });
+  assert.equal(secondRange.startRow, 2);
+  assert.equal(secondRange.rowCount, 1000);
+  assert.equal(secondRange.isFull, true);
+});
+
+test('末尾に古い日時を後から追記しても、範囲読み込みの結果は全件読み込みと一致する', () => {
+  const meals = [
+    { id: 'window-old', timestamp: '2026-08-02T01:00:00Z' },
+    { id: 'window-new', timestamp: '2026-08-08T01:00:00Z' },
+    { id: 'appended-old', timestamp: '2026-07-01T01:00:00Z' },
+  ];
+  const dateKey = (timestamp) => new Date(timestamp).toISOString().slice(0, 10);
+  const filterWindow = (rows) => rows.filter((meal) => {
+    const date = dateKey(meal.timestamp);
+    return date >= '2026-08-02' && date <= '2026-08-08';
+  });
+  const range = filters.resolveFoodLogReadRange(meals.length + 1, 1, {
+    initialRows: 2,
+    growthFactor: 4,
+  });
+  const rangeMeals = meals.slice(meals.length - range.rowCount);
+
+  assert.deepEqual(filterWindow(rangeMeals), filterWindow(meals));
+  assert.equal(filters.countRecentMealsForReadValue(
+    rangeMeals,
+    Date.parse('2026-08-08T02:00:00Z'),
+    '2026-08-08',
+    dateKey,
+    3,
+  ), 2);
+});
+
+test('記録が空いていても、必要な直近3件がそろうまで範囲を拡張できる', () => {
+  const meals = [
+    { id: 'very-old', timestamp: '2026-01-01T01:00:00Z' },
+    { id: 'recent-1', timestamp: '2026-08-01T01:00:00Z' },
+    { id: 'recent-2', timestamp: '2026-07-20T01:00:00Z' },
+    { id: 'today', timestamp: '2026-08-08T01:00:00Z' },
+    { id: 'recent-3', timestamp: '2026-07-10T01:00:00Z' },
+  ];
+  const dateKey = (timestamp) => new Date(timestamp).toISOString().slice(0, 10);
+  const range = filters.resolveFoodLogReadRange(meals.length + 1, 1, {
+    initialRows: 2,
+    growthFactor: 2,
+  });
+  const rangeMeals = meals.slice(meals.length - range.rowCount);
+
+  assert.equal(filters.countRecentMealsForReadValue(
+    rangeMeals,
+    Date.parse('2026-08-08T02:00:00Z'),
+    '2026-08-08',
+    dateKey,
+    3,
+  ), 3);
+});

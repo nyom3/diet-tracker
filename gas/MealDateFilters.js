@@ -37,6 +37,35 @@ function isDateKeyNotAfter(date, latestDate) {
   return isValidDateKey(date) && isValidDateKey(latestDate) && date <= latestDate;
 }
 
+function resolveFoodLogReadRange(lastRow, attempt, options) {
+  var totalRows = Math.max(0, Math.floor(Number(lastRow) || 0) - 1);
+  var config = options || {};
+  var initialRows = Math.max(1, Math.floor(Number(config.initialRows) || 500));
+  var growthFactor = Math.max(2, Math.floor(Number(config.growthFactor) || 4));
+  var attemptIndex = Math.max(0, Math.floor(Number(attempt) || 0));
+  var requestedRows = initialRows * Math.pow(growthFactor, attemptIndex);
+  var rowCount = Math.min(totalRows, requestedRows);
+
+  return {
+    startRow: rowCount > 0 ? Math.floor(lastRow) - rowCount + 1 : 2,
+    rowCount: rowCount,
+    isFull: rowCount === totalRows,
+  };
+}
+
+function countRecentMealsForReadValue(meals, nowMs, today, dateKeyForTimestamp, limit) {
+  var maxCount = Math.max(0, Math.floor(Number(limit) || 0));
+
+  if (maxCount === 0) {
+    return 0;
+  }
+
+  return meals.filter(function (meal) {
+    var timestamp = mealTimestampMs(meal);
+    return timestamp !== null && timestamp <= nowMs && dateKeyForTimestamp(timestamp) !== today;
+  }).length;
+}
+
 if (typeof module !== 'undefined') {
   module.exports = {
     mealTimestampMs: mealTimestampMs,
@@ -45,5 +74,7 @@ if (typeof module !== 'undefined') {
     sortMealsByTimestampDescending: sortMealsByTimestampDescending,
     isValidDateKey: isValidDateKey,
     isDateKeyNotAfter: isDateKeyNotAfter,
+    resolveFoodLogReadRange: resolveFoodLogReadRange,
+    countRecentMealsForReadValue: countRecentMealsForReadValue,
   };
 }
