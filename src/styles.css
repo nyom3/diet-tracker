@@ -275,6 +275,33 @@ h2 {
   margin-bottom: 12px;
 }
 
+.today-date-navigation {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+}
+
+.today-date-navigation-label {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  text-align: center;
+}
+
+.today-date-navigation-label strong {
+  color: var(--ink);
+  font-size: 17px;
+}
+
+.today-return-button {
+  grid-column: 1 / -1;
+  min-height: 44px;
+  padding: 8px 12px;
+}
+
 .today-focus-panel {
   border-color: rgba(36, 107, 72, 0.24);
   background: linear-gradient(135deg, rgba(238, 249, 239, 0.96), rgba(255, 255, 255, 0.96));

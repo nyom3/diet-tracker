@@ -142,6 +142,22 @@ test('HomeSnapshot境界は未記録日・null drop・欠落配列を安全側�
   assert.deepEqual(result.rule_focus.evidence, []);
 });
 
+test('DaySnapshot境界は欠落配列とnullableな目標を安全側へ正規化する', () => {
+  const result = gasClient.normalizeDaySnapshot({
+    date: '2026-07-14',
+    today: { date: '2026-07-14', count: 1, total: { calories_kcal: 500 } },
+    goals: { calories_kcal: null, target_weight_kg: undefined },
+    meals: undefined,
+  });
+
+  assert.equal(result.date, '2026-07-14');
+  assert.equal(result.today.count, 1);
+  assert.equal(result.today.total.calories_kcal, 500);
+  assert.equal(result.goals.calories_kcal, null);
+  assert.equal(result.goals.target_weight_kg, null);
+  assert.deepEqual(result.meals, []);
+});
+
 test('getGoals/saveGoals/getHomeSnapshotは専用RPCを呼び、応答を正規化する', async () => {
   const previousWindow = globalThis.window;
   const calls = [];
@@ -165,6 +181,10 @@ test('getGoals/saveGoals/getHomeSnapshotは専用RPCを呼び、応答を正規�
       calls.push('getHomeSnapshot');
       this.successHandler({ date: '2026-07-15' });
     },
+    getDaySnapshot(date) {
+      calls.push(['getDaySnapshot', date]);
+      this.successHandler({ date, today: { date, count: 1 }, meals: [] });
+    },
   };
 
   globalThis.window = { google: { script: { run: runner } } };
@@ -178,11 +198,13 @@ test('getGoals/saveGoals/getHomeSnapshotは専用RPCを呼び、応答を正規�
       target_weight_kg: null,
     });
     const snapshot = await gasClient.getHomeSnapshot();
+    const day = await gasClient.getDaySnapshot('2026-07-14');
 
     assert.equal(goals.target_weight_kg, 68);
     assert.equal(saved.goals.target_weight_kg, null);
     assert.equal(snapshot.date, '2026-07-15');
-    assert.deepEqual(calls, ['getGoals', ['saveGoals', null], 'getHomeSnapshot']);
+    assert.equal(day.date, '2026-07-14');
+    assert.deepEqual(calls, ['getGoals', ['saveGoals', null], 'getHomeSnapshot', ['getDaySnapshot', '2026-07-14']]);
   } finally {
     globalThis.window = previousWindow;
   }

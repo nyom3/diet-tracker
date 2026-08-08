@@ -224,6 +224,13 @@ export type HomeSnapshot = {
   rule_focus: CoachInsight;
 };
 
+export type DaySnapshot = {
+  date: string;
+  today: TodaySummary;
+  goals: HealthGoals;
+  meals: SavedMeal[];
+};
+
 export type ImagePayload = {
   base64: string;
   mimeType: string;
