@@ -1792,6 +1792,49 @@ h2 {
   font-weight: 800;
 }
 
+.item-context-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.item-basis-field {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  padding: 10px;
+}
+
+.item-basis-field p {
+  min-height: 44px;
+  margin: 0;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.item-add-button,
+.item-remove-button {
+  min-height: 44px;
+}
+
+.item-remove-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-weight: 800;
+}
+
 .item-nutrition-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2053,6 +2096,7 @@ h2 {
   }
 
   .macro-summary,
+  .item-context-grid,
   .item-nutrition-grid,
   .target-preview,
   .trend-list li,

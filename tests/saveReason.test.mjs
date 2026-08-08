@@ -26,6 +26,8 @@ function validInput(overrides = {}) {
     hasNutrition: true,
     description: '牛丼',
     total: validTotal,
+    itemCount: 1,
+    hasItemBreakdown: true,
     ...overrides,
   };
 }
@@ -63,4 +65,18 @@ test('食事名と不正な栄養値を順に案内する', () => {
 
 test('条件を満たすと案内を返さない', () => {
   assert.equal(getSaveBlockedReason(validInput()), null);
+});
+
+test('品目が0件の場合は追加を促す', () => {
+  assert.equal(
+    getSaveBlockedReason(validInput({ itemCount: 0 })),
+    '品目を1件以上追加してください',
+  );
+});
+
+test('品目を使わない直接入力は従来どおり保存できる', () => {
+  assert.equal(
+    getSaveBlockedReason(validInput({ itemCount: 0, hasItemBreakdown: false })),
+    null,
+  );
 });
