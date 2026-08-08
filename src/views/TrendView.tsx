@@ -75,10 +75,14 @@ export function TrendView({ data, status, rangeDays, onRangeChange, onRetry, onA
   const [coachStatus, setCoachStatus] = React.useState<ResourceStatus>('loaded');
   const [coachError, setCoachError] = React.useState('');
   const [actionAccepted, setActionAccepted] = React.useState(false);
+  const [coachActionStatus, setCoachActionStatus] = React.useState<ResourceStatus>('loaded');
+  const [coachActionError, setCoachActionError] = React.useState('');
   const [focusedInsights, setFocusedInsights] = React.useState<Partial<Record<CoachFocus, CoachInsight>>>({});
   const [focusedStatuses, setFocusedStatuses] = React.useState<Partial<Record<CoachFocus, ResourceStatus>>>({});
   const [focusedErrors, setFocusedErrors] = React.useState<Partial<Record<CoachFocus, string>>>({});
   const [focusedActionsAccepted, setFocusedActionsAccepted] = React.useState<Partial<Record<CoachFocus, boolean>>>({});
+  const [focusedActionStatuses, setFocusedActionStatuses] = React.useState<Partial<Record<CoachFocus, ResourceStatus>>>({});
+  const [focusedActionErrors, setFocusedActionErrors] = React.useState<Partial<Record<CoachFocus, string>>>({});
 
   React.useEffect(() => {
     if (!data) {
@@ -94,10 +98,14 @@ export function TrendView({ data, status, rangeDays, onRangeChange, onRetry, onA
     setCoachStatus('loaded');
     setCoachError('');
     setActionAccepted(false);
+    setCoachActionStatus('loaded');
+    setCoachActionError('');
     setFocusedInsights({});
     setFocusedStatuses({});
     setFocusedErrors({});
     setFocusedActionsAccepted({});
+    setFocusedActionStatuses({});
+    setFocusedActionErrors({});
   }, [rangeDays]);
 
   const selectedDay = data?.days.find((day) => day.date === selectedDate) ?? data?.days[data.days.length - 1] ?? null;
@@ -151,16 +159,16 @@ export function TrendView({ data, status, rangeDays, onRangeChange, onRetry, onA
     if (!selectedAction || actionAccepted) {
       return;
     }
-    setCoachStatus('loading');
-    setCoachError('');
+    setCoachActionStatus('loading');
+    setCoachActionError('');
     try {
       await acceptCoachAction({ scope: 'trend', range_days: rangeDays, action_key: selectedAction.key });
       setActionAccepted(true);
-      setCoachStatus('loaded');
+      setCoachActionStatus('loaded');
       await onActionAccepted();
     } catch (error) {
-      setCoachStatus('error');
-      setCoachError(error instanceof Error ? error.message : '行動を開始できませんでした。');
+      setCoachActionStatus('error');
+      setCoachActionError(error instanceof Error ? error.message : '行動を開始できませんでした。');
     }
   }
 
@@ -169,16 +177,16 @@ export function TrendView({ data, status, rangeDays, onRangeChange, onRetry, onA
     if (!selectedAction || focusedActionsAccepted[focus]) {
       return;
     }
-    setFocusedStatuses((current) => ({ ...current, [focus]: 'loading' }));
-    setFocusedErrors((current) => ({ ...current, [focus]: '' }));
+    setFocusedActionStatuses((current) => ({ ...current, [focus]: 'loading' }));
+    setFocusedActionErrors((current) => ({ ...current, [focus]: '' }));
     try {
       await acceptCoachAction({ scope: 'trend', range_days: rangeDays, focus, action_key: selectedAction.key });
       setFocusedActionsAccepted((current) => ({ ...current, [focus]: true }));
-      setFocusedStatuses((current) => ({ ...current, [focus]: 'loaded' }));
+      setFocusedActionStatuses((current) => ({ ...current, [focus]: 'loaded' }));
       await onActionAccepted();
     } catch (error) {
-      setFocusedStatuses((current) => ({ ...current, [focus]: 'error' }));
-      setFocusedErrors((current) => ({
+      setFocusedActionStatuses((current) => ({ ...current, [focus]: 'error' }));
+      setFocusedActionErrors((current) => ({
         ...current,
         [focus]: error instanceof Error ? error.message : '行動を開始できませんでした。',
       }));
@@ -192,6 +200,8 @@ export function TrendView({ data, status, rangeDays, onRangeChange, onRetry, onA
       status: focusedStatuses[focus] ?? 'loaded',
       error: focusedErrors[focus] ?? '',
       actionAccepted: focusedActionsAccepted[focus] === true,
+      actionStatus: focusedActionStatuses[focus] ?? 'loaded',
+      actionError: focusedActionErrors[focus] ?? '',
       onAnalyze: () => void handleGenerateFocusedCoachInsight(focus),
       onAccept: () => void handleAcceptFocusedCoachAction(focus),
     };
@@ -284,15 +294,17 @@ export function TrendView({ data, status, rangeDays, onRangeChange, onRetry, onA
           <button
             className="action-button primary-action coach-insight-button"
             type="button"
-            disabled={!data || coachStatus === 'loading'}
+            disabled={!data || coachStatus === 'loading' || coachInsight !== null}
             onClick={() => void handleGenerateCoachInsight()}
           >
             {coachStatus === 'loading' ? <Loader2 className="spin" size={18} /> : <Sparkles size={18} />}
-            分析する
+            {coachInsight ? '分析済み' : '分析する'}
           </button>
         </div>
         {coachStatus === 'loading' && <p className="coach-insight-status" role="status">分析中です。少しお待ちください。</p>}
         {coachStatus === 'error' && <p className="coach-insight-status error" role="alert">{coachError}</p>}
+        {coachActionStatus === 'loading' && <p className="coach-insight-status" role="status">行動を開始しています。</p>}
+        {coachActionStatus === 'error' && <p className="coach-insight-status error" role="alert">{coachActionError}</p>}
         {coachInsight && coachStatus !== 'loading' && (
           <CoachInsightPanel insight={coachInsight} actionAccepted={actionAccepted} onAccept={() => void handleAcceptCoachAction()} />
         )}
@@ -336,6 +348,8 @@ type ChartCoachProps = {
   status: ResourceStatus;
   error: string;
   actionAccepted: boolean;
+  actionStatus: ResourceStatus;
+  actionError: string;
   onAnalyze: () => void;
   onAccept: () => void;
 };
@@ -391,7 +405,7 @@ function CoachEvidenceRow({ evidence }: { evidence: CoachEvidence }): JSX.Elemen
 }
 
 function formatEvidenceNumber(value: number): string {
-  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+  return value.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
 }
 
 function coachFocusLabel(focus: CoachFocus): string {
@@ -699,6 +713,8 @@ function TrendChart({
       <p className="chart-summary">{summary}</p>
       {coach.status === 'loading' && <p className="coach-insight-status" role="status">この指標を分析中です。</p>}
       {coach.status === 'error' && <p className="coach-insight-status error" role="alert">{coach.error}</p>}
+      {coach.actionStatus === 'loading' && <p className="coach-insight-status" role="status">行動を開始しています。</p>}
+      {coach.actionStatus === 'error' && <p className="coach-insight-status error" role="alert">{coach.actionError}</p>}
       {coach.insight && coach.status !== 'loading' && (
         <div className="chart-coach-result">
           <span className="section-label">{coachFocusLabel(coach.focus)}の分析</span>

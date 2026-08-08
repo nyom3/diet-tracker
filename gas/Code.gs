@@ -717,7 +717,7 @@ function buildCoachAiPrompt(scope, context, today, candidatePairs, focus) {
   };
 
   return 'あなたは食事記録アプリの安全なコーチです。入力JSONに含まれる候補だけを選び、医療診断や目標変更をせずに回答してください。' +
-    '見出しは40文字以内、説明は160文字以内です。説明に数字を書く場合は、選択した候補のevidenceにあるvalueまたはcomparison_valueと同じ値を、そのままの桁で引用してください。期間の日付は説明に書かないでください。' +
+    '見出しは40文字以内、説明は160文字以内です。説明に数字を書く場合は、選択した候補のevidenceにあるvalueまたはcomparison_valueと同じ値を、そのままの桁で引用してください。数字に桁区切りのカンマは使わず、期間の日付は説明に書かないでください。' +
     'JSONのみで返し、action_keyとevidence_keyは同じ候補ペアから選んでください。' +
     'headline、summary、evidence_key、action_key以外のキーは返さないでください。\n' +
     JSON.stringify(payload);

@@ -124,6 +124,11 @@ test('focusはevidence生成段階で対応する観点だけに絞り、weight�
   const insufficient = coach.buildCoachInsight('trend', noWeightDays, goals, noWeightDays.at(-1), 'weight');
   assert.equal(insufficient.selected_action, null);
   assert.match(insufficient.summary, /必要/);
+
+  const loggingStable = coach.buildCoachInsight('trend', days, goals, days.at(-1), 'logging');
+  assert.match(loggingStable.headline, /追加案内はありません/);
+  const macrosStable = coach.buildCoachInsight('trend', days, { ...goals, protein_g: 50 }, days.at(-1), 'macros');
+  assert.match(macrosStable.headline, /追加案内はありません/);
 });
 
 test('行動候補は5テンプレートの条件を満たす場合だけ生成する', () => {
@@ -230,6 +235,19 @@ test('AI説明は選択候補のevidence値だけを絶対値で引用できる'
   assert.deepEqual(JSON.parse(JSON.stringify(coach.validateCoachAiResponse(candidates, valid))), valid);
   assert.equal(coach.validateCoachAiResponse(candidates, { ...valid, summary: '体重は1.2kg減り、歩数は5000歩でした。' }), null);
   assert.equal(coach.validateCoachAiResponse(candidates, { ...valid, summary: '体重は2026年に減りました。' }), null);
+
+  const energyCandidate = [{
+    evidence_key: 'energy_pattern',
+    action_key: 'energy',
+    evidence: [{ value: 1850, comparison_value: 2100 }],
+  }];
+  const energyResponse = {
+    headline: '摂取と消費を確認する',
+    summary: '平均摂取は１，８５０kcal、消費は2,100kcalでした。',
+    evidence_key: 'energy_pattern',
+    action_key: 'energy',
+  };
+  assert.deepEqual(JSON.parse(JSON.stringify(coach.validateCoachAiResponse(energyCandidate, energyResponse))), energyResponse);
 });
 
 test('buildCoachInsightはrules由来の主候補と代替候補を返す', () => {

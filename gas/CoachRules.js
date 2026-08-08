@@ -219,8 +219,8 @@ function buildCoachInsight(scope, days, goals, today, focus) {
     generated_at: context.date + 'T00:00:00.000+09:00',
     scope: scope === 'trend' ? 'trend' : 'today',
     source: 'rules',
-    headline: focus && pairs.length === 0 ? coachFocusLabel(focus) + 'のデータが不足しています' : coachHeadline(selectedPair && selectedPair.type),
-    summary: focus && pairs.length === 0 ? 'この観点を分析するには、もう少し記録が必要です。' : coachSummary(selectedPair && selectedPair.type),
+    headline: focus && pairs.length === 0 ? coachFocusNoEvidenceHeadline(focus, context) : coachHeadline(selectedPair && selectedPair.type),
+    summary: focus && pairs.length === 0 ? coachFocusNoEvidenceSummary(focus, context) : coachSummary(selectedPair && selectedPair.type),
     confidence: selectedPair ? selectedPair.confidence : 'low',
     evidence: selectedSuggestion ? selectedSuggestion.evidence : [],
     selected_action: selectedPair ? selectedPair.action : null,
@@ -234,8 +234,43 @@ function extractCoachSummaryNumbers(summary) {
     .replace(/．/g, '.')
     .replace(/－/g, '-')
     .replace(/＋/g, '+');
+  normalized = normalized.replace(/([0-9])[,，]([0-9])/g, '$1$2');
   var matches = normalized.match(/[+-]?(?:\d+(?:\.\d*)?|\.\d+)/g) || [];
   return matches.map(function (value) { return Number(value); }).filter(function (value) { return isFinite(value); });
+}
+
+function coachFocusHasEnoughData(focus, context) {
+  if (focus === 'logging') {
+    return context.confidence.nutrition !== 'low';
+  }
+  if (focus === 'weight') {
+    return context.days.length >= 14 && context.days.filter(function (day) { return day.weight_kg !== null; }).length >= 2;
+  }
+  if (focus === 'energy') {
+    return context.days.filter(function (day) {
+      return day.coverage.adequate && day.expenditure_kcal !== null;
+    }).length >= 2;
+  }
+  if (focus === 'macros') {
+    return context.goals.protein_g !== null && context.goals.protein_g > 0
+      && context.days.filter(function (day) { return day.meal_count > 0; }).length >= 2;
+  }
+  if (focus === 'activity') {
+    return getCoachRecentActivity(context.days).observedDays >= 5;
+  }
+  return false;
+}
+
+function coachFocusNoEvidenceHeadline(focus, context) {
+  return coachFocusHasEnoughData(focus, context)
+    ? coachFocusLabel(focus) + 'の追加案内はありません'
+    : coachFocusLabel(focus) + 'のデータが不足しています';
+}
+
+function coachFocusNoEvidenceSummary(focus, context) {
+  return coachFocusHasEnoughData(focus, context)
+    ? 'この期間はこの観点で追加の行動案内がありません。記録の傾向をそのまま確認できます。'
+    : 'この観点を分析するには、もう少し記録が必要です。';
 }
 
 function coachFocusLabel(focus) {
