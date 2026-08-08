@@ -360,6 +360,7 @@ function acceptCoachAction(payload) {
     context.dashboard.days,
     context.dashboard.goals,
     today,
+    normalizedRequest.focus,
   );
   const actionCandidates = buildCoachActionCandidates(
     context.dashboard.days,
@@ -442,6 +443,7 @@ function normalizeCoachActionRequest(payload) {
   return {
     scope: insightRequest.scope,
     rangeDays: insightRequest.rangeDays,
+    focus: insightRequest.focus,
     actionKey: actionKey,
   };
 }
@@ -517,12 +519,14 @@ function generateCoachInsight(request) {
     context.dashboard.days,
     context.dashboard.goals,
     today,
+    normalizedRequest.focus,
   );
   const evidenceSuggestions = buildCoachEvidence(
     normalizedRequest.scope,
     context.dashboard.days,
     context.dashboard.goals,
     today,
+    normalizedRequest.focus,
   );
   const actionCandidates = buildCoachActionCandidates(
     context.dashboard.days,
@@ -535,7 +539,7 @@ function generateCoachInsight(request) {
     return rulesInsight;
   }
 
-  const prompt = buildCoachAiPrompt(normalizedRequest.scope, context, today, candidatePairs);
+  const prompt = buildCoachAiPrompt(normalizedRequest.scope, context, today, candidatePairs, normalizedRequest.focus);
   const aiResult = runAiJson(prompt, 'low');
 
   if (!aiResult || !aiResult.ok) {
@@ -628,7 +632,12 @@ function normalizeCoachInsightRequest(request) {
     throw new Error('分析期間は7、30、90日のいずれかです。');
   }
 
-  return { scope: scope, rangeDays: rangeDays };
+  const focus = source.focus == null ? null : String(source.focus).trim();
+  if (focus !== null && ['logging', 'weight', 'energy', 'macros', 'activity'].indexOf(focus) === -1) {
+    throw new Error('コーチ分析の観点が不正です。');
+  }
+
+  return { scope: scope, rangeDays: rangeDays, focus: focus };
 }
 
 function getCoachDashboardContext(rangeDays, now) {
@@ -659,7 +668,7 @@ function buildCoachDashboardData(rangeDays, now, meals, goals) {
   });
 }
 
-function buildCoachAiPrompt(scope, context, today, candidatePairs) {
+function buildCoachAiPrompt(scope, context, today, candidatePairs, focus) {
   const periodStart = scope === 'today' ? context.dashboard.window_end : context.dashboard.window_start;
   const periodMeals = (context.meals || []).map(function (meal) {
     const timestamp = new Date(meal.timestamp);
@@ -675,6 +684,7 @@ function buildCoachAiPrompt(scope, context, today, candidatePairs) {
 
   const payload = {
     scope: scope,
+    focus: focus || null,
     period: {
       start: periodStart,
       end: context.dashboard.window_end,
@@ -707,7 +717,7 @@ function buildCoachAiPrompt(scope, context, today, candidatePairs) {
   };
 
   return 'あなたは食事記録アプリの安全なコーチです。入力JSONに含まれる候補だけを選び、医療診断や目標変更をせずに回答してください。' +
-    '見出しは40文字以内、説明は160文字以内で、説明には半角・全角を問わず数字を含めないでください。' +
+    '見出しは40文字以内、説明は160文字以内です。説明に数字を書く場合は、選択した候補のevidenceにあるvalueまたはcomparison_valueと同じ値を、そのままの桁で引用してください。期間の日付は説明に書かないでください。' +
     'JSONのみで返し、action_keyとevidence_keyは同じ候補ペアから選んでください。' +
     'headline、summary、evidence_key、action_key以外のキーは返さないでください。\n' +
     JSON.stringify(payload);

@@ -1,7 +1,7 @@
 import React from 'react';
 import { Check, ChevronDown, ChevronLeft, ChevronRight, Loader2, Sparkles } from 'lucide-react';
 import { acceptCoachAction, generateCoachInsight } from '../gasClient';
-import type { CoachEvidence, CoachInsight, DashboardData, DashboardDay, DashboardRangeDays } from '../types';
+import type { CoachEvidence, CoachFocus, CoachInsight, DashboardData, DashboardDay, DashboardRangeDays } from '../types';
 import {
   buildMetricPoints,
   calculateRollingAverage,
@@ -75,6 +75,10 @@ export function TrendView({ data, status, rangeDays, onRangeChange, onRetry, onA
   const [coachStatus, setCoachStatus] = React.useState<ResourceStatus>('loaded');
   const [coachError, setCoachError] = React.useState('');
   const [actionAccepted, setActionAccepted] = React.useState(false);
+  const [focusedInsights, setFocusedInsights] = React.useState<Partial<Record<CoachFocus, CoachInsight>>>({});
+  const [focusedStatuses, setFocusedStatuses] = React.useState<Partial<Record<CoachFocus, ResourceStatus>>>({});
+  const [focusedErrors, setFocusedErrors] = React.useState<Partial<Record<CoachFocus, string>>>({});
+  const [focusedActionsAccepted, setFocusedActionsAccepted] = React.useState<Partial<Record<CoachFocus, boolean>>>({});
 
   React.useEffect(() => {
     if (!data) {
@@ -90,6 +94,10 @@ export function TrendView({ data, status, rangeDays, onRangeChange, onRetry, onA
     setCoachStatus('loaded');
     setCoachError('');
     setActionAccepted(false);
+    setFocusedInsights({});
+    setFocusedStatuses({});
+    setFocusedErrors({});
+    setFocusedActionsAccepted({});
   }, [rangeDays]);
 
   const selectedDay = data?.days.find((day) => day.date === selectedDate) ?? data?.days[data.days.length - 1] ?? null;
@@ -119,6 +127,25 @@ export function TrendView({ data, status, rangeDays, onRangeChange, onRetry, onA
     }
   }
 
+  async function handleGenerateFocusedCoachInsight(focus: CoachFocus): Promise<void> {
+    if (!data || focusedInsights[focus] || focusedStatuses[focus] === 'loading') {
+      return;
+    }
+    setFocusedStatuses((current) => ({ ...current, [focus]: 'loading' }));
+    setFocusedErrors((current) => ({ ...current, [focus]: '' }));
+    try {
+      const insight = await generateCoachInsight({ scope: 'trend', range_days: rangeDays, focus });
+      setFocusedInsights((current) => ({ ...current, [focus]: insight }));
+      setFocusedStatuses((current) => ({ ...current, [focus]: 'loaded' }));
+    } catch (error) {
+      setFocusedStatuses((current) => ({ ...current, [focus]: 'error' }));
+      setFocusedErrors((current) => ({
+        ...current,
+        [focus]: error instanceof Error ? error.message : 'AI分析を取得できませんでした。',
+      }));
+    }
+  }
+
   async function handleAcceptCoachAction(): Promise<void> {
     const selectedAction = coachInsight?.selected_action;
     if (!selectedAction || actionAccepted) {
@@ -135,6 +162,39 @@ export function TrendView({ data, status, rangeDays, onRangeChange, onRetry, onA
       setCoachStatus('error');
       setCoachError(error instanceof Error ? error.message : '行動を開始できませんでした。');
     }
+  }
+
+  async function handleAcceptFocusedCoachAction(focus: CoachFocus): Promise<void> {
+    const selectedAction = focusedInsights[focus]?.selected_action;
+    if (!selectedAction || focusedActionsAccepted[focus]) {
+      return;
+    }
+    setFocusedStatuses((current) => ({ ...current, [focus]: 'loading' }));
+    setFocusedErrors((current) => ({ ...current, [focus]: '' }));
+    try {
+      await acceptCoachAction({ scope: 'trend', range_days: rangeDays, focus, action_key: selectedAction.key });
+      setFocusedActionsAccepted((current) => ({ ...current, [focus]: true }));
+      setFocusedStatuses((current) => ({ ...current, [focus]: 'loaded' }));
+      await onActionAccepted();
+    } catch (error) {
+      setFocusedStatuses((current) => ({ ...current, [focus]: 'error' }));
+      setFocusedErrors((current) => ({
+        ...current,
+        [focus]: error instanceof Error ? error.message : '行動を開始できませんでした。',
+      }));
+    }
+  }
+
+  function createChartCoachProps(focus: CoachFocus): ChartCoachProps {
+    return {
+      focus,
+      insight: focusedInsights[focus] ?? null,
+      status: focusedStatuses[focus] ?? 'loaded',
+      error: focusedErrors[focus] ?? '',
+      actionAccepted: focusedActionsAccepted[focus] === true,
+      onAnalyze: () => void handleGenerateFocusedCoachInsight(focus),
+      onAccept: () => void handleAcceptFocusedCoachAction(focus),
+    };
   }
 
   return (
@@ -259,16 +319,26 @@ export function TrendView({ data, status, rangeDays, onRangeChange, onRetry, onA
             <SummaryCard label="平均歩数" value={formatMetricValue(data.summary.average_steps, ' 歩')} />
           </section>
 
-          <WeightChart data={data} selectedDay={selectedDay} />
-          <EnergyChart data={data} selectedDay={selectedDay} />
-          <PfcChart data={data} selectedDay={selectedDay} metric={pfcMetric} onMetricChange={setPfcMetric} />
-          <StepsChart data={data} selectedDay={selectedDay} />
-          <CoverageChart data={data} selectedDay={selectedDay} />
+          <WeightChart data={data} selectedDay={selectedDay} coach={createChartCoachProps('weight')} />
+          <EnergyChart data={data} selectedDay={selectedDay} coach={createChartCoachProps('energy')} />
+          <PfcChart data={data} selectedDay={selectedDay} metric={pfcMetric} onMetricChange={setPfcMetric} coach={createChartCoachProps('macros')} />
+          <StepsChart data={data} selectedDay={selectedDay} coach={createChartCoachProps('activity')} />
+          <CoverageChart data={data} selectedDay={selectedDay} coach={createChartCoachProps('logging')} />
         </>
       )}
     </main>
   );
 }
+
+type ChartCoachProps = {
+  focus: CoachFocus;
+  insight: CoachInsight | null;
+  status: ResourceStatus;
+  error: string;
+  actionAccepted: boolean;
+  onAnalyze: () => void;
+  onAccept: () => void;
+};
 
 function CoachInsightPanel({
   insight,
@@ -324,6 +394,16 @@ function formatEvidenceNumber(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
+function coachFocusLabel(focus: CoachFocus): string {
+  return {
+    logging: '記録',
+    weight: '体重',
+    energy: 'エネルギー',
+    macros: 'PFC',
+    activity: '活動',
+  }[focus];
+}
+
 function confidenceLabel(value: DashboardData['confidence']['nutrition']): string {
   return value === 'high' ? '高' : value === 'medium' ? '中' : '低';
 }
@@ -337,7 +417,7 @@ function SummaryCard({ label, value }: { label: string; value: string }): JSX.El
   return <div className="trend-summary-card"><span>{label}</span><strong>{value}</strong></div>;
 }
 
-function WeightChart({ data, selectedDay }: { data: DashboardData; selectedDay: DashboardDay }): JSX.Element {
+function WeightChart({ data, selectedDay, coach }: { data: DashboardData; selectedDay: DashboardDay; coach: ChartCoachProps }): JSX.Element {
   const raw = buildMetricPoints(data.days, 'weight_kg');
   const trend = buildMetricPoints(data.days, 'weight_trend_kg');
   const target = data.goals.target_weight_kg;
@@ -370,11 +450,12 @@ function WeightChart({ data, selectedDay }: { data: DashboardData; selectedDay: 
         { label: '7日トレンド', value: (day) => formatMetricValue(day.weight_trend_kg, ' kg', 1) },
         ...(target === null ? [] : [{ label: '目標体重', value: () => formatMetricValue(target, ' kg', 1) }]),
       ]}
+      coach={coach}
     />
   );
 }
 
-function EnergyChart({ data, selectedDay }: { data: DashboardData; selectedDay: DashboardDay }): JSX.Element {
+function EnergyChart({ data, selectedDay, coach }: { data: DashboardData; selectedDay: DashboardDay; coach: ChartCoachProps }): JSX.Element {
   const intake = buildMetricPoints(data.days, 'calories_kcal');
   const expenditure = buildMetricPoints(data.days, 'expenditure_kcal');
   const target = data.goals.calories_kcal;
@@ -408,6 +489,7 @@ function EnergyChart({ data, selectedDay }: { data: DashboardData; selectedDay: 
         { label: '消費', value: (day) => formatMetricValue(day.expenditure_kcal, ' kcal') },
         { label: '差分', value: (day) => isEnergyDecisionPending(day) ? '判定保留' : formatSigned(day.energy_balance_kcal, ' kcal') },
       ]}
+      coach={coach}
     />
   );
 }
@@ -417,7 +499,8 @@ function PfcChart({
   selectedDay,
   metric,
   onMetricChange,
-}: { data: DashboardData; selectedDay: DashboardDay; metric: PfcMetric; onMetricChange: (metric: PfcMetric) => void }): JSX.Element {
+  coach,
+}: { data: DashboardData; selectedDay: DashboardDay; metric: PfcMetric; onMetricChange: (metric: PfcMetric) => void; coach: ChartCoachProps }): JSX.Element {
   const mode = getPfcDisplayMode(data.goals, metric);
   const points = data.days.map((day) => ({ date: day.date, value: getPfcChartValue(day, data.goals, metric) }));
   const domain = mode === 'ratio'
@@ -456,11 +539,12 @@ function PfcChart({
       )}
       detailValues={[{ label, value: formatMetricValue(selectedValue, unit), note: mode === 'ratio' ? `${selectedValue !== null && selectedValue > 100 ? '目標超過・' : ''}実績 / 目標 × 100` : '目標未設定のためグラム表示' }]}
       tableColumns={[{ label: `${label}${mode === 'ratio' ? '（目標比）' : ''}`, value: (day) => formatMetricValue(getPfcChartValue(day, data.goals, metric), unit) }]}
+      coach={coach}
     />
   );
 }
 
-function StepsChart({ data, selectedDay }: { data: DashboardData; selectedDay: DashboardDay }): JSX.Element {
+function StepsChart({ data, selectedDay, coach }: { data: DashboardData; selectedDay: DashboardDay; coach: ChartCoachProps }): JSX.Element {
   const points = buildMetricPoints(data.days, 'steps');
   const average = calculateRollingAverage(data.days, 'steps');
   const domain = calculateTrendDomain([0, ...points.map((point) => point.value), ...average.map((point) => point.value)]);
@@ -485,11 +569,12 @@ function StepsChart({ data, selectedDay }: { data: DashboardData; selectedDay: D
         { label: '歩数', value: (day) => formatMetricValue(day.steps, ' 歩') },
         { label: '7日平均', value: (day) => formatMetricValue(average.find((point) => point.date === day.date)?.value ?? null, ' 歩') },
       ]}
+      coach={coach}
     />
   );
 }
 
-function CoverageChart({ data, selectedDay }: { data: DashboardData; selectedDay: DashboardDay }): JSX.Element {
+function CoverageChart({ data, selectedDay, coach }: { data: DashboardData; selectedDay: DashboardDay; coach: ChartCoachProps }): JSX.Element {
   const points = data.days.map((day) => ({ date: day.date, value: day.coverage.ratio * 3 }));
   return (
     <TrendChart
@@ -503,6 +588,7 @@ function CoverageChart({ data, selectedDay }: { data: DashboardData; selectedDay
       summary={`${selectedDay.coverage.logged_main_meal_types.length}/3（${selectedDay.coverage.adequate ? '十分' : '記録途中'}）。実際に食べた全量ではなく、記録の十分さの近似です。`}
       detailValues={[{ label: '朝・昼・夜', value: `${selectedDay.coverage.logged_main_meal_types.length}/3`, note: selectedDay.coverage.logged_main_meal_types.join('・') || '記録なし' }]}
       tableColumns={[{ label: '朝・昼・夜', value: (day) => `${day.coverage.logged_main_meal_types.length}/3` }]}
+      coach={coach}
     />
   );
 }
@@ -519,6 +605,7 @@ function TrendChart({
   detailValues,
   tableColumns,
   toolbar,
+  coach,
 }: {
   id: string;
   title: string;
@@ -531,6 +618,7 @@ function TrendChart({
   detailValues: DetailValue[];
   tableColumns: TableColumn[];
   toolbar?: React.ReactNode;
+  coach: ChartCoachProps;
 }): JSX.Element {
   const width = 640;
   const height = 250;
@@ -551,7 +639,18 @@ function TrendChart({
           <span className="section-label">グラフ</span>
           <h2>{title}</h2>
         </div>
-        {toolbar}
+        <div className="chart-heading-actions">
+          {toolbar}
+          <button
+            className="action-button secondary-action chart-coach-button"
+            type="button"
+            disabled={coach.status === 'loading' || coach.insight !== null}
+            onClick={coach.onAnalyze}
+          >
+            {coach.status === 'loading' ? <Loader2 className="spin" size={16} /> : <Sparkles size={16} />}
+            {coach.insight ? '分析済み' : 'この指標を分析'}
+          </button>
+        </div>
       </div>
       <div className="chart-frame">
         <svg className="trend-chart-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-labelledby={`${id}-title ${id}-description`}>
@@ -598,6 +697,14 @@ function TrendChart({
         {series.map((item) => <span key={item.label}><i className={`legend-mark ${item.mode ?? 'line'} ${item.dash ? 'dashed' : ''}`} style={{ backgroundColor: item.color }} />{item.label}</span>)}
       </div>
       <p className="chart-summary">{summary}</p>
+      {coach.status === 'loading' && <p className="coach-insight-status" role="status">この指標を分析中です。</p>}
+      {coach.status === 'error' && <p className="coach-insight-status error" role="alert">{coach.error}</p>}
+      {coach.insight && coach.status !== 'loading' && (
+        <div className="chart-coach-result">
+          <span className="section-label">{coachFocusLabel(coach.focus)}の分析</span>
+          <CoachInsightPanel insight={coach.insight} actionAccepted={coach.actionAccepted} onAccept={coach.onAccept} />
+        </div>
+      )}
       <div className="chart-detail" aria-label={`${title}の選択日詳細`}>
         <strong>{formatDate(selectedDay.date)}の詳細</strong>
         <div className="chart-detail-grid">

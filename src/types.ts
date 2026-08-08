@@ -164,9 +164,11 @@ export type DashboardData = {
 };
 
 export type CoachScope = 'today' | 'trend';
+export type CoachFocus = 'logging' | 'weight' | 'energy' | 'macros' | 'activity';
 export type GenerateCoachInsightRequest = {
   scope: CoachScope;
   range_days?: DashboardRangeDays;
+  focus?: CoachFocus | null;
 };
 export type AcceptCoachActionPayload = GenerateCoachInsightRequest & {
   action_key: string;
