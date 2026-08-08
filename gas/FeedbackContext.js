@@ -16,7 +16,8 @@ function feedbackRound(value) {
 
 function addFeedbackMealTotal(total, meal) {
   FEEDBACK_TARGET_KEYS.forEach(function (key) {
-    total[key] += feedbackNumber(meal && meal[key]);
+    var nextValue = total[key] + feedbackNumber(meal && meal[key]);
+    total[key] = key === 'calories_kcal' ? Math.round(nextValue) : feedbackRound(nextValue);
   });
   return total;
 }
@@ -98,6 +99,7 @@ function buildTodayFeedbackPrompt(context) {
     'g / C' +
     total.carbs_g +
     'g\n' +
+    '差分は正数が残り、負数が目標超過を表します。\n' +
     '目標差分（残り予算）:\n- ' +
     context.target_lines.join('\n- ') +
     '\n食事:\n- ' +

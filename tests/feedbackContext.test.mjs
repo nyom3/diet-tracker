@@ -90,16 +90,41 @@ test('目標未設定: 未設定を明示し、差分値を捏造しない', () 
   assert.match(prompt, /protein_g: 合計 20 \/ 目標 90 \/ 差分 70/);
 });
 
+test('PFC合計は既存sumMealsと同じく各加算時に小数1桁へ丸める', () => {
+  const meals = [meal('朝'), meal('昼'), meal('夜')].map((entry) => ({
+    ...entry,
+    protein_g: 20.5,
+    fat_g: 10.1,
+    carbs_g: 25.1,
+  }));
+  const context = feedback.buildTodayFeedbackContext(
+    meals,
+    { calories_kcal: 2000, protein_g: 100, fat_g: 50, carbs_g: 100 },
+    '20:00',
+  );
+  const prompt = feedback.buildTodayFeedbackPrompt(context);
+
+  assert.deepEqual(plain(context.total), {
+    calories_kcal: 1500,
+    protein_g: 61.5,
+    fat_g: 30.3,
+    carbs_g: 75.3,
+  });
+  assert.match(prompt, /合計: 1500kcal \/ P61\.5g \/ F30\.3g \/ C75\.3g/);
+  assert.doesNotMatch(prompt, /75\.30000000000001/);
+});
+
 function loadCodeContext() {
   const context = {
     console,
     module: { exports: {} },
-    TARGET_KEYS: ['calories_kcal', 'protein_g', 'fat_g', 'carbs_g'],
     Session: { getScriptTimeZone: () => 'Asia/Tokyo' },
     Utilities: {
       formatDate: (date, _timezone, format) => format === 'HH:mm' ? '19:30' : '2026-08-08',
     },
   };
+  // Code.gs is evaluated here only to exercise its GAS boundary functions;
+  // all external APIs used by the tested paths are replaced below.
   vm.runInNewContext(feedbackSource, context);
   vm.runInNewContext(codeSource, context);
   return context;
