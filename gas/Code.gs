@@ -288,9 +288,9 @@ function getHomeSnapshot() {
   const timezone = Session.getScriptTimeZone();
   const date = Utilities.formatDate(now, timezone, 'yyyy-MM-dd');
   const meals = readFoodLogsFromSheet(getFoodLogSheet());
-  const todayMeals = meals.filter(function (meal) {
+  const todayMeals = sortMealsByTimestampDescending(meals.filter(function (meal) {
     return isMealOnDate(meal, date, timezone);
-  });
+  }));
   const recentMeals = meals
     .filter(function (meal) {
       const timestamp = new Date(meal.timestamp);

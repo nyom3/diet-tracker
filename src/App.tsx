@@ -239,6 +239,7 @@ export function App(): JSX.Element {
   const [targetCaloriesInput, setTargetCaloriesInput] = React.useState('');
   const [targetWeightInput, setTargetWeightInput] = React.useState('');
   const [homeSnapshot, setHomeSnapshot] = React.useState<HomeSnapshot | null>(null);
+  const [todayDateKey, setTodayDateKey] = React.useState(() => createDateKey(new Date()));
   const [selectedTodayDate, setSelectedTodayDate] = React.useState(() => createDateKey(new Date()));
   const [daySnapshot, setDaySnapshot] = React.useState<DaySnapshot | null>(null);
   const [isTargetPanelOpen, setIsTargetPanelOpen] = React.useState(() => readBooleanStorage(targetPanelStorageKey, false));
@@ -271,6 +272,7 @@ export function App(): JSX.Element {
   const dashboardRequestIdRef = React.useRef(0);
   const homeSnapshotRequestIdRef = React.useRef(0);
   const daySnapshotRequestIdRef = React.useRef(0);
+  const previousTodayDateRef = React.useRef(todayDateKey);
   const initialHomeSnapshotRequestedRef = React.useRef(false);
 
   const estimationInput = inputMode === 'photo'
@@ -286,7 +288,6 @@ export function App(): JSX.Element {
   const calculatedTargets = calculateTargetsFromRatio(targetCaloriesInput, pfcRatio);
   const homeToday = homeSnapshot?.today ?? todaySummary;
   const homeGoals = homeSnapshot?.goals ?? targets;
-  const todayDateKey = createDateKey(new Date());
   const isSelectedToday = selectedTodayDate === todayDateKey;
   const selectedDaySummary = isSelectedToday ? homeToday : daySnapshot?.today ?? null;
   const selectedDayGoals = isSelectedToday ? homeGoals : daySnapshot?.goals ?? emptyTargets;
@@ -338,6 +339,26 @@ export function App(): JSX.Element {
     initialHomeSnapshotRequestedRef.current = true;
     void loadHomeSnapshot();
   }, []);
+
+  React.useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      const nextDateKey = createDateKey(new Date());
+      setTodayDateKey((current) => current === nextDateKey ? current : nextDateKey);
+    }, 60_000);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  React.useEffect(() => {
+    const previousTodayDate = previousTodayDateRef.current;
+    if (previousTodayDate !== todayDateKey && selectedTodayDate === previousTodayDate) {
+      setSelectedTodayDate(todayDateKey);
+      setDaySnapshot(null);
+      setDaySnapshotStatus('loaded');
+      void loadHomeSnapshot(true);
+    }
+    previousTodayDateRef.current = todayDateKey;
+  }, [selectedTodayDate, todayDateKey]);
 
   React.useEffect(() => {
     if (!hasMountedViewRef.current) {
@@ -587,6 +608,8 @@ export function App(): JSX.Element {
     event.preventDefault();
 
     try {
+      const wasEditing = Boolean(selectedMealId);
+      const savedDate = wasEditing ? datetime.slice(0, 10) : todayDateKey;
       const payload = buildPayload({
         datetime,
         mealType,
@@ -606,10 +629,14 @@ export function App(): JSX.Element {
       clearMealDraft();
       resetForm();
       invalidateDashboardCache();
-      await loadHomeSnapshot(true);
-      setSelectedTodayDate(createDateKey(new Date()));
-      setDaySnapshot(null);
-      setStatus({ message: selectedMealId ? '更新しました。' : '保存しました。', type: 'success' });
+      setSelectedTodayDate(savedDate);
+      if (savedDate === todayDateKey) {
+        setDaySnapshot(null);
+        await loadHomeSnapshot(true);
+      } else {
+        await loadDaySnapshot(savedDate);
+      }
+      setStatus({ message: wasEditing ? '更新しました。' : '保存しました。', type: 'success' });
       navigateTo('today');
     } catch (error) {
       setStatus({ message: getErrorMessage(error), type: 'error' });
@@ -2246,12 +2273,16 @@ function formatDateLabel(dateKey: string): string {
   if (Number.isNaN(timestamp)) {
     return dateKey;
   }
-  return new Intl.DateTimeFormat('ja-JP', {
+  const options: Intl.DateTimeFormatOptions = {
     month: 'numeric',
     day: 'numeric',
     weekday: 'short',
     timeZone: 'UTC',
-  }).format(new Date(timestamp));
+  };
+  if (dateKey.slice(0, 4) !== String(new Date().getFullYear())) {
+    options.year = 'numeric';
+  }
+  return new Intl.DateTimeFormat('ja-JP', options).format(new Date(timestamp));
 }
 
 function createLocalTimestamp(datetime: string): string {
