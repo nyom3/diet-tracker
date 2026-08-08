@@ -1525,6 +1525,8 @@ function rowToFavorite(row) {
   };
 }
 
+// 通常の利用（数件/日）なら約半年分を1回で読む。行順は追記順に近いという前提で、
+// 疎な記録は recent_meals の件数を満たすまで段階拡張し、上限後は全件へフォールバックする。
 var FOOD_LOG_RANGE_INITIAL_ROWS = 500;
 var FOOD_LOG_RANGE_GROWTH_FACTOR = 4;
 var FOOD_LOG_RANGE_MAX_ATTEMPTS = 3;
@@ -1539,10 +1541,11 @@ function readFoodLogValues(sheet, range) {
   return sheet.getRange(range.startRow, 1, range.rowCount, FOOD_LOG_HEADERS.length).getValues();
 }
 
-function mapFoodLogRows(values) {
-  return values
-    .map(function (row) { return rowToFoodLog(row); })
-    .filter(function (meal) { return meal.id; });
+function mapFoodLogRows(values, filterEmptyId) {
+  const meals = values
+    .map(function (row) { return rowToFoodLog(row); });
+
+  return filterEmptyId ? meals.filter(function (meal) { return meal.id; }) : meals;
 }
 
 function readFoodLogsFromSheet(sheet, options) {
@@ -1558,6 +1561,7 @@ function readFoodLogsFromSheet(sheet, options) {
   const today = Utilities.formatDate(now, timezone, 'yyyy-MM-dd');
   const recentMealLimit = Math.max(0, Math.floor(Number(config.recentMealLimit) || 0));
   const initialRows = foodLogReadInitialRows(config.rangeDays);
+  const filterEmptyId = config.filterEmptyId !== false;
   const dateKeyForTimestamp = function (timestamp) {
     return Utilities.formatDate(new Date(timestamp), timezone, 'yyyy-MM-dd');
   };
@@ -1568,7 +1572,7 @@ function readFoodLogsFromSheet(sheet, options) {
       initialRows: initialRows,
       growthFactor: FOOD_LOG_RANGE_GROWTH_FACTOR,
     });
-    meals = mapFoodLogRows(readFoodLogValues(sheet, range));
+    meals = mapFoodLogRows(readFoodLogValues(sheet, range), filterEmptyId);
 
     if (!recentMealLimit || range.isFull || countRecentMealsForReadValue(
       meals,
@@ -1585,7 +1589,7 @@ function readFoodLogsFromSheet(sheet, options) {
     initialRows: lastRow - 1,
     growthFactor: FOOD_LOG_RANGE_GROWTH_FACTOR,
   });
-  return mapFoodLogRows(readFoodLogValues(sheet, fullRange));
+  return mapFoodLogRows(readFoodLogValues(sheet, fullRange), filterEmptyId);
 }
 
 function readFavoritesFromSheet(sheet) {
@@ -1673,7 +1677,10 @@ function listMealsForWindow(windowStartDate, windowEndDate) {
   const sheet = getFoodLogSheet();
   const rangeDays = Math.max(1, Math.ceil((startOfLocalDay(windowEndDate).getTime() -
     startOfLocalDay(windowStartDate).getTime()) / (24 * 60 * 60 * 1000)) + 1);
-  const meals = readFoodLogsFromSheet(sheet, { rangeDays: rangeDays });
+  const meals = readFoodLogsFromSheet(sheet, {
+    rangeDays: rangeDays,
+    filterEmptyId: false,
+  });
 
   const startTime = startOfLocalDay(windowStartDate).getTime();
   const endTime = windowEndDate.getTime();
