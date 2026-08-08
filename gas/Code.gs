@@ -867,11 +867,10 @@ function getLatestWeeklyReview() {
 
 function summarizeWeeklyFeedback() {
   const trend = getWeeklyTrend();
-  const latestReview = getLatestWeeklyReview();
 
-  if (latestReview && latestReview.window_end === trend.window_end) {
-    return latestReview;
-  }
+  // window_end is always today. Generation is user-triggered, so do not reuse
+  // today's review here; getWeeklyTrend().latest_review handles read-only
+  // redisplay without invoking AI.
 
   const activeDays = trend.days.filter(function (day) {
     return day.count > 0;
@@ -931,46 +930,24 @@ function summarizeWeeklyFeedback() {
 }
 
 function summarizeTodayFeedback() {
-  const meals = listMealsForFeedbackWindow(new Date());
+  const now = new Date();
+  const meals = listMealsForFeedbackWindow(now);
 
   if (meals.length === 0) {
     throw new Error('今日の食事記録がまだありません。');
   }
 
-  const total = sumMeals(meals);
-  const mealLines = meals.map(function (meal) {
-    return [
-      meal.meal_type,
-      meal.description,
-      Math.round(meal.calories_kcal) + 'kcal',
-      'P' + meal.protein_g + 'g',
-      'F' + meal.fat_g + 'g',
-      'C' + meal.carbs_g + 'g',
-    ].join(' / ');
-  });
-
-  const prompt =
-    'あなたは食事記録を見て短く実用的にコメントする栄養士です。\n' +
-    '評価時点までの今日の食事だけを対象に、食べ過ぎ傾向・ヘルシーさ・次の一食の提案を日本語で3文以内にまとめてください。\n' +
-    '断定しすぎず、医療助言ではなく一般的な食事コメントとして書いてください。\n\n' +
-    '合計: ' +
-    Math.round(total.calories_kcal) +
-    'kcal / P' +
-    total.protein_g +
-    'g / F' +
-    total.fat_g +
-    'g / C' +
-    total.carbs_g +
-    'g\n' +
-    '食事:\n- ' +
-    mealLines.join('\n- ');
+  const timezone = Session.getScriptTimeZone();
+  const evaluationTime = Utilities.formatDate(now, timezone, 'HH:mm');
+  const context = buildTodayFeedbackContext(meals, getTargets(), evaluationTime);
+  const prompt = buildTodayFeedbackPrompt(context);
 
   const aiResult = runAiText(prompt, 'low');
 
   return {
-    date: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd'),
+    date: Utilities.formatDate(now, timezone, 'yyyy-MM-dd'),
     count: meals.length,
-    total: total,
+    total: context.total,
     feedback: aiResult.text,
     fallback_notice: aiResult.fallback_notice,
   };
