@@ -2,6 +2,8 @@ import React from 'react';
 import {
   Camera,
   Check,
+  ChevronLeft,
+  ChevronRight,
   Clipboard,
   History,
   Loader2,
@@ -24,6 +26,7 @@ import {
   deleteMeal,
   estimateCalories,
   getAiStatus,
+  getDaySnapshot,
   getDashboardData,
   getGoals,
   getHomeSnapshot,
@@ -45,6 +48,7 @@ import type {
   DashboardData,
   DashboardRangeDays,
   DailyFeedback,
+  DaySnapshot,
   EstimateMode,
   FavoriteMeal,
   FavoriteMealPayload,
@@ -235,6 +239,8 @@ export function App(): JSX.Element {
   const [targetCaloriesInput, setTargetCaloriesInput] = React.useState('');
   const [targetWeightInput, setTargetWeightInput] = React.useState('');
   const [homeSnapshot, setHomeSnapshot] = React.useState<HomeSnapshot | null>(null);
+  const [selectedTodayDate, setSelectedTodayDate] = React.useState(() => createDateKey(new Date()));
+  const [daySnapshot, setDaySnapshot] = React.useState<DaySnapshot | null>(null);
   const [isTargetPanelOpen, setIsTargetPanelOpen] = React.useState(() => readBooleanStorage(targetPanelStorageKey, false));
   const [pfcRatio, setPfcRatio] = React.useState(defaultPfcRatio);
   const [dashboardRange, setDashboardRange] = React.useState<DashboardRangeDays>(30);
@@ -246,6 +252,7 @@ export function App(): JSX.Element {
   const [summaryStatus, setSummaryStatus] = React.useState<ResourceStatus>('loading');
   const [targetsStatus, setTargetsStatus] = React.useState<ResourceStatus>('loading');
   const [homeSnapshotStatus, setHomeSnapshotStatus] = React.useState<ResourceStatus>('loading');
+  const [daySnapshotStatus, setDaySnapshotStatus] = React.useState<ResourceStatus>('loaded');
   const [dashboardStatus, setDashboardStatus] = React.useState<ResourceStatus>('loading');
   const [aiStatus, setAiStatus] = React.useState<AiStatus | null>(null);
   const [isAiPanelOpen, setIsAiPanelOpen] = React.useState(() => readBooleanStorage(aiPanelStorageKey, false));
@@ -263,6 +270,7 @@ export function App(): JSX.Element {
   const photoRequestIdRef = React.useRef(0);
   const dashboardRequestIdRef = React.useRef(0);
   const homeSnapshotRequestIdRef = React.useRef(0);
+  const daySnapshotRequestIdRef = React.useRef(0);
   const initialHomeSnapshotRequestedRef = React.useRef(false);
 
   const estimationInput = inputMode === 'photo'
@@ -278,6 +286,11 @@ export function App(): JSX.Element {
   const calculatedTargets = calculateTargetsFromRatio(targetCaloriesInput, pfcRatio);
   const homeToday = homeSnapshot?.today ?? todaySummary;
   const homeGoals = homeSnapshot?.goals ?? targets;
+  const todayDateKey = createDateKey(new Date());
+  const isSelectedToday = selectedTodayDate === todayDateKey;
+  const selectedDaySummary = isSelectedToday ? homeToday : daySnapshot?.today ?? null;
+  const selectedDayGoals = isSelectedToday ? homeGoals : daySnapshot?.goals ?? emptyTargets;
+  const selectedDayMeals = isSelectedToday ? homeSnapshot?.today_meals ?? [] : daySnapshot?.meals ?? [];
   const hasTargets = hasCompleteTargets(homeGoals);
   const canSave =
     !busy &&
@@ -594,6 +607,8 @@ export function App(): JSX.Element {
       resetForm();
       invalidateDashboardCache();
       await loadHomeSnapshot(true);
+      setSelectedTodayDate(createDateKey(new Date()));
+      setDaySnapshot(null);
       setStatus({ message: selectedMealId ? '更新しました。' : '保存しました。', type: 'success' });
       navigateTo('today');
     } catch (error) {
@@ -750,6 +765,49 @@ export function App(): JSX.Element {
     }
   }
 
+  async function loadDaySnapshot(date: string): Promise<boolean> {
+    const requestId = daySnapshotRequestIdRef.current + 1;
+    daySnapshotRequestIdRef.current = requestId;
+    setDaySnapshotStatus('loading');
+
+    try {
+      const snapshot = await getDaySnapshot(date);
+      if (daySnapshotRequestIdRef.current !== requestId) {
+        return false;
+      }
+
+      setDaySnapshot(snapshot);
+      setDaySnapshotStatus('loaded');
+      return true;
+    } catch (error) {
+      if (daySnapshotRequestIdRef.current !== requestId) {
+        return false;
+      }
+      console.warn('過去日の記録の読み込みに失敗しました:', error);
+      setDaySnapshotStatus('error');
+      return false;
+    }
+  }
+
+  function selectTodayDate(date: string): void {
+    setSelectedTodayDate(date);
+    if (date === todayDateKey) {
+      setDaySnapshot(null);
+      setDaySnapshotStatus('loaded');
+      void loadHomeSnapshot(true);
+    } else {
+      void loadDaySnapshot(date);
+    }
+  }
+
+  function moveSelectedDate(amount: number): void {
+    const nextDate = addDateDays(selectedTodayDate, amount);
+    if (nextDate > todayDateKey) {
+      return;
+    }
+    selectTodayDate(nextDate);
+  }
+
   async function loadDashboard(rangeDays: DashboardRangeDays, force = false): Promise<void> {
     if (!force && dashboardCache[rangeDays]) {
       setDashboardStatus('loaded');
@@ -849,6 +907,8 @@ export function App(): JSX.Element {
       const result = await processInput(buildQuickPayload(meal));
       invalidateDashboardCache();
       await loadHomeSnapshot(true);
+      setSelectedTodayDate(createDateKey(new Date()));
+      setDaySnapshot(null);
       showQuickUndo(result.id, meal.description);
       setStatus({ message: 'クイック登録しました。', type: 'success' });
       navigateTo('today');
@@ -937,19 +997,6 @@ export function App(): JSX.Element {
       setStatus({ message: 'コメントを取得中です。' });
       const feedback = await summarizeTodayFeedback();
       setDailyFeedback(feedback);
-      setTodaySummary({
-        date: feedback.date,
-        count: feedback.count,
-        total: feedback.total,
-      });
-      setHomeSnapshot((current) => current ? {
-        ...current,
-        today: {
-          date: feedback.date,
-          count: feedback.count,
-          total: feedback.total,
-        },
-      } : current);
       setStatus(
         feedback.fallback_notice
           ? { message: `コメントを取得しました。${feedback.fallback_notice}`, type: 'error' }
@@ -1126,7 +1173,7 @@ export function App(): JSX.Element {
       <AppHeader
         ref={settingsButtonRef}
         currentView={currentView}
-        dateLabel={formatToday()}
+        dateLabel={currentView === 'today' ? formatDateLabel(selectedTodayDate) : formatToday()}
         onOpenSettings={openSettings}
       />
 
@@ -1138,20 +1185,60 @@ export function App(): JSX.Element {
 
       {currentView === 'today' && (
         <TodayView>
-          {quickUndo && (
-            <div className="quick-undo-banner" role="status" aria-live="polite">
-              <span>{quickUndo.description}を登録しました。</span>
-              <button
-                type="button"
-                className="quick-undo-button"
-                disabled={busy !== null}
-                onClick={() => void handleUndoQuickRegister()}
-              >
-                取り消す
-              </button>
+          <section className="panel today-date-navigation" aria-label="表示する日付">
+            <button
+              className="icon-button"
+              type="button"
+              aria-label="前日を表示"
+              disabled={busy !== null}
+              onClick={() => moveSelectedDate(-1)}
+            >
+              <ChevronLeft size={20} aria-hidden="true" />
+            </button>
+            <div className="today-date-navigation-label">
+              <span className="section-label">{isSelectedToday ? '今日' : '過去日の記録'}</span>
+              <strong>{formatDateLabel(selectedTodayDate)}</strong>
             </div>
+            <button
+              className="icon-button"
+              type="button"
+              aria-label="翌日を表示"
+              disabled={busy !== null || selectedTodayDate >= todayDateKey}
+              onClick={() => moveSelectedDate(1)}
+            >
+              <ChevronRight size={20} aria-hidden="true" />
+            </button>
+            {!isSelectedToday && (
+              <button className="secondary-action today-return-button" type="button" disabled={busy !== null} onClick={() => selectTodayDate(todayDateKey)}>
+                今日に戻る
+              </button>
+            )}
+          </section>
+          {!isSelectedToday && (
+            <PanelStatusNote
+              status={daySnapshotStatus}
+              hasData={daySnapshot !== null}
+              loadingText="過去日の記録を読み込み中です。"
+              errorText="過去日の記録を読み込めませんでした。"
+              onRetry={() => void loadDaySnapshot(selectedTodayDate)}
+            />
           )}
-          <section className="panel today-focus-panel">
+          {isSelectedToday && (
+            <>
+              {quickUndo && (
+                <div className="quick-undo-banner" role="status" aria-live="polite">
+                  <span>{quickUndo.description}を登録しました。</span>
+                  <button
+                    type="button"
+                    className="quick-undo-button"
+                    disabled={busy !== null}
+                    onClick={() => void handleUndoQuickRegister()}
+                  >
+                    取り消す
+                  </button>
+                </div>
+              )}
+              <section className="panel today-focus-panel">
             <PanelStatusNote
               status={homeSnapshotStatus}
               hasData={homeSnapshot !== null}
@@ -1190,47 +1277,54 @@ export function App(): JSX.Element {
                 )}
               </div>
             )}
-          </section>
+              </section>
+            </>
+          )}
 
           <section className="panel today-panel today-summary-panel">
-            <PanelStatusNote
-              status={summaryStatus}
-              hasData={homeToday !== null}
-              loadingText="今日の記録を読み込み中です。"
-              errorText="今日の記録を読み込めませんでした。"
-              onRetry={() => void loadHomeSnapshot(true)}
-            />
-            <PanelStatusNote
-              status={targetsStatus}
-              hasData={hasTargets}
-              loadingText="目標を読み込み中です。"
-              errorText="目標を読み込めませんでした。"
-              onRetry={() => void loadHomeSnapshot(true)}
-            />
+            {isSelectedToday && (
+              <>
+                <PanelStatusNote
+                  status={summaryStatus}
+                  hasData={selectedDaySummary !== null}
+                  loadingText="今日の記録を読み込み中です。"
+                  errorText="今日の記録を読み込めませんでした。"
+                  onRetry={() => void loadHomeSnapshot(true)}
+                />
+                <PanelStatusNote
+                  status={targetsStatus}
+                  hasData={hasTargets}
+                  loadingText="目標を読み込み中です。"
+                  errorText="目標を読み込めませんでした。"
+                  onRetry={() => void loadHomeSnapshot(true)}
+                />
+              </>
+            )}
             <div>
-              <span className="section-label">今日の進捗</span>
-              <h2>
-                <span className={isOverTarget(homeToday?.total.calories_kcal || 0, homeGoals.calories_kcal) ? 'over' : ''}>
-                  {formatTargetProgress(homeToday?.total.calories_kcal || 0, homeGoals.calories_kcal, 'kcal')}
+                <span className="section-label">{isSelectedToday ? '今日の進捗' : 'この日の進捗'}</span>
+                <h2>
+                <span className={isOverTarget(selectedDaySummary?.total.calories_kcal || 0, selectedDayGoals.calories_kcal) ? 'over' : ''}>
+                  {formatTargetProgress(selectedDaySummary?.total.calories_kcal || 0, selectedDayGoals.calories_kcal, 'kcal')}
                 </span>
                 <small>
-                  <span className={isOverTarget(homeToday?.total.protein_g || 0, homeGoals.protein_g) ? 'over' : ''}>
-                    P{formatTargetProgress(homeToday?.total.protein_g || 0, homeGoals.protein_g, 'g')}
+                  <span className={isOverTarget(selectedDaySummary?.total.protein_g || 0, selectedDayGoals.protein_g) ? 'over' : ''}>
+                    P{formatTargetProgress(selectedDaySummary?.total.protein_g || 0, selectedDayGoals.protein_g, 'g')}
                   </span>
-                  <span className={isOverTarget(homeToday?.total.fat_g || 0, homeGoals.fat_g) ? 'over' : ''}>
-                    F{formatTargetProgress(homeToday?.total.fat_g || 0, homeGoals.fat_g, 'g')}
+                  <span className={isOverTarget(selectedDaySummary?.total.fat_g || 0, selectedDayGoals.fat_g) ? 'over' : ''}>
+                    F{formatTargetProgress(selectedDaySummary?.total.fat_g || 0, selectedDayGoals.fat_g, 'g')}
                   </span>
-                  <span className={isOverTarget(homeToday?.total.carbs_g || 0, homeGoals.carbs_g) ? 'over' : ''}>
-                    C{formatTargetProgress(homeToday?.total.carbs_g || 0, homeGoals.carbs_g, 'g')}
+                  <span className={isOverTarget(selectedDaySummary?.total.carbs_g || 0, selectedDayGoals.carbs_g) ? 'over' : ''}>
+                    C{formatTargetProgress(selectedDaySummary?.total.carbs_g || 0, selectedDayGoals.carbs_g, 'g')}
                   </span>
                 </small>
               </h2>
-              {!hasTargets && targetsStatus === 'loaded' && (
+              {!hasCompleteTargets(selectedDayGoals) && (isSelectedToday ? targetsStatus === 'loaded' : daySnapshotStatus === 'loaded') && (
                 <p className="target-empty-note">目標を設定すると残り/超過を表示します。</p>
               )}
             </div>
           </section>
 
+          {isSelectedToday && (
           <section className="panel today-primary-cta">
             <div>
               <span className="section-label">入力</span>
@@ -1241,7 +1335,9 @@ export function App(): JSX.Element {
               食事を記録
             </button>
           </section>
+          )}
 
+          {isSelectedToday && (
           <section className="panel today-quick-panel">
             <div className="section-heading">
               <div>
@@ -1273,7 +1369,9 @@ export function App(): JSX.Element {
               <p className="empty-text">最近の記録はありません。</p>
             )}
           </section>
+          )}
 
+          {isSelectedToday && (
           <section className="panel today-quick-panel">
             <div className="section-heading">
               <div>
@@ -1305,17 +1403,18 @@ export function App(): JSX.Element {
               <p className="empty-text">最近の記録からお気に入りを追加できます。</p>
             )}
           </section>
+          )}
 
           <section className="panel today-meals-panel">
             <div className="section-heading">
               <div>
                 <span className="section-label">一覧</span>
-                <h2>今日の食事</h2>
+                <h2>{isSelectedToday ? '今日の食事' : `${formatDateLabel(selectedTodayDate)}の食事`}</h2>
               </div>
             </div>
-            {homeSnapshot?.today_meals.length ? (
+            {selectedDayMeals.length ? (
               <ul className="today-meal-list">
-                {homeSnapshot.today_meals.map((meal) => (
+                {selectedDayMeals.map((meal) => (
                   <li key={meal.id}>
                     <span>
                       <strong>{meal.description}</strong>
@@ -1327,16 +1426,17 @@ export function App(): JSX.Element {
                   </li>
                 ))}
               </ul>
-            ) : homeSnapshotStatus === 'loaded' ? (
-              <p className="empty-text">今日の食事はまだありません。</p>
+            ) : (isSelectedToday ? homeSnapshotStatus : daySnapshotStatus) === 'loaded' ? (
+              <p className="empty-text">この日の食事はまだありません。</p>
             ) : null}
           </section>
 
+          {isSelectedToday && (
           <section className="panel today-feedback-panel">
             <button
               className="action-button secondary-action feedback-action"
               type="button"
-              disabled={busy !== null || !homeToday?.count}
+              disabled={busy !== null || !selectedDaySummary?.count}
               onClick={handleDailyFeedback}
             >
               {busy === 'feedback' ? <Loader2 className="spin" size={18} /> : <MessageCircle size={18} />}
@@ -1344,6 +1444,7 @@ export function App(): JSX.Element {
             </button>
             {dailyFeedback && <p className="feedback-text">{dailyFeedback.feedback}</p>}
           </section>
+          )}
         </TodayView>
       )}
 
@@ -1982,7 +2083,7 @@ function buildPayload({
   });
 
   return {
-    timestamp: datetime + ':00.000+09:00',
+    timestamp: createLocalTimestamp(datetime),
     meal_type: mealType,
     description,
     calories_kcal: total.calories_kcal,
@@ -1996,7 +2097,7 @@ function buildPayload({
 
 function buildQuickPayload(meal: SavedMeal | FavoriteMeal): SaveMealPayload {
   return {
-    timestamp: createLocalDatetimeValue() + ':00.000+09:00',
+    timestamp: createLocalTimestamp(createLocalDatetimeValue()),
     meal_type: getDefaultMealType(),
     description: meal.description,
     calories_kcal: meal.calories_kcal,
@@ -2125,6 +2226,46 @@ function createLocalDatetimeValue(date = new Date()): string {
   const now = Number.isNaN(date.getTime()) ? new Date() : date;
   const pad = (value: number) => String(value).padStart(2, '0');
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+}
+
+function createDateKey(date: Date): string {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function addDateDays(date: string, amount: number): string {
+  const timestamp = Date.parse(`${date}T00:00:00Z`);
+  if (Number.isNaN(timestamp)) {
+    return date;
+  }
+  return new Date(timestamp + amount * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+function formatDateLabel(dateKey: string): string {
+  const timestamp = Date.parse(`${dateKey}T00:00:00Z`);
+  if (Number.isNaN(timestamp)) {
+    return dateKey;
+  }
+  return new Intl.DateTimeFormat('ja-JP', {
+    month: 'numeric',
+    day: 'numeric',
+    weekday: 'short',
+    timeZone: 'UTC',
+  }).format(new Date(timestamp));
+}
+
+function createLocalTimestamp(datetime: string): string {
+  const localDate = new Date(`${datetime}:00`);
+  if (Number.isNaN(localDate.getTime())) {
+    throw new Error('食事日時が不正です。');
+  }
+
+  const offsetMinutes = -localDate.getTimezoneOffset();
+  const sign = offsetMinutes >= 0 ? '+' : '-';
+  const absoluteMinutes = Math.abs(offsetMinutes);
+  const hours = String(Math.floor(absoluteMinutes / 60)).padStart(2, '0');
+  const minutes = String(absoluteMinutes % 60).padStart(2, '0');
+  return `${datetime}:00.000${sign}${hours}:${minutes}`;
 }
 
 function getDefaultMealType(date = new Date()): MealType {

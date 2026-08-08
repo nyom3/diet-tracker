@@ -10,6 +10,7 @@ import type {
   DashboardData,
   DashboardRangeDays,
   DataConfidence,
+  DaySnapshot,
   FavoriteMeal,
   FavoriteMealPayload,
   GenerateCoachInsightRequest,
@@ -69,6 +70,7 @@ type GoogleScriptRun = {
   getGoals: () => void;
   saveGoals: (payload: SaveGoalsPayload) => void;
   getHomeSnapshot: () => void;
+  getDaySnapshot: (date: string) => void;
   generateCoachInsight: (request: GenerateCoachInsightRequest) => void;
   acceptCoachAction: (payload: AcceptCoachActionPayload) => void;
   setCoachActionStatus: (id: string, status: 'completed' | 'dismissed') => void;
@@ -168,6 +170,12 @@ export function getHomeSnapshot(): Promise<HomeSnapshot> {
   return callGas<Partial<HomeSnapshot>>((runner) => {
     runner.getHomeSnapshot();
   }).then(normalizeHomeSnapshot);
+}
+
+export function getDaySnapshot(date: string): Promise<DaySnapshot> {
+  return callGas<Partial<DaySnapshot>>((runner) => {
+    runner.getDaySnapshot(date);
+  }).then(normalizeDaySnapshot);
 }
 
 export function generateCoachInsight(request: GenerateCoachInsightRequest): Promise<CoachInsight> {
@@ -290,6 +298,18 @@ export function normalizeHomeSnapshot(snapshot: Partial<HomeSnapshot> | null | u
     favorites: normalizeFavoriteMeals(raw.favorites),
     active_action: normalizeCoachAction(raw.active_action),
     rule_focus: normalizeCoachInsight(raw.rule_focus, date),
+  };
+}
+
+export function normalizeDaySnapshot(snapshot: Partial<DaySnapshot> | null | undefined): DaySnapshot {
+  const raw = asRecord(snapshot);
+  const date = normalizeDateKey(raw.date) || '1970-01-01';
+
+  return {
+    date,
+    today: normalizeTodaySummary(raw.today, date),
+    goals: normalizeHealthGoals(asRecord(raw.goals) as Partial<HealthGoals>),
+    meals: normalizeSavedMeals(raw.meals),
   };
 }
 

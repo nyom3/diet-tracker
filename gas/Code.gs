@@ -110,14 +110,13 @@ function listRecentMeals(limit) {
   const startRow = Math.max(2, lastRow - count + 1);
   const values = sheet.getRange(startRow, 1, lastRow - startRow + 1, FOOD_LOG_HEADERS.length).getValues();
 
-  return values
+  return sortMealsByTimestampDescending(values
     .map(function (row) {
       return rowToFoodLog(row);
     })
     .filter(function (meal) {
       return meal.id;
-    })
-    .reverse();
+    }));
 }
 
 function listFavorites() {
@@ -238,11 +237,14 @@ function deleteMeal(id) {
 }
 
 function getTodaySummary() {
-  const meals = listMealsForTodayUntil(new Date());
+  const now = new Date();
+  const timezone = Session.getScriptTimeZone();
+  const date = Utilities.formatDate(now, timezone, 'yyyy-MM-dd');
+  const meals = listMealsForDate(date, timezone);
   const total = sumMeals(meals);
 
   return {
-    date: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd'),
+    date: date,
     count: meals.length,
     total: total,
   };
@@ -287,7 +289,7 @@ function getHomeSnapshot() {
   const date = Utilities.formatDate(now, timezone, 'yyyy-MM-dd');
   const meals = readFoodLogsFromSheet(getFoodLogSheet());
   const todayMeals = meals.filter(function (meal) {
-    return isMealOnDateUntil(meal, date, now, timezone);
+    return isMealOnDate(meal, date, timezone);
   });
   const recentMeals = meals
     .filter(function (meal) {
@@ -325,6 +327,23 @@ function getHomeSnapshot() {
     favorites: favorites,
     active_action: activeAction,
     rule_focus: buildCoachInsight('today', dashboard.days, goals, todayDashboardDay),
+  };
+}
+
+function getDaySnapshot(date) {
+  const timezone = Session.getScriptTimeZone();
+  const targetDate = validateDaySnapshotDate(date, new Date(), timezone);
+  const meals = listMealsForDate(targetDate, timezone);
+
+  return {
+    date: targetDate,
+    today: {
+      date: targetDate,
+      count: meals.length,
+      total: sumMeals(meals),
+    },
+    goals: getGoals(),
+    meals: meals,
   };
 }
 
@@ -912,7 +931,7 @@ function summarizeWeeklyFeedback() {
 }
 
 function summarizeTodayFeedback() {
-  const meals = listMealsForTodayUntil(new Date());
+  const meals = listMealsForFeedbackWindow(new Date());
 
   if (meals.length === 0) {
     throw new Error('今日の食事記録がまだありません。');
@@ -1539,14 +1558,38 @@ function readFavoritesFromSheet(sheet) {
     .filter(function (favorite) { return favorite.id; });
 }
 
-function isMealOnDateUntil(meal, date, now, timezone) {
-  const timestamp = new Date(meal.timestamp);
-
-  return !isNaN(timestamp.getTime()) && timestamp.getTime() <= now.getTime() &&
-    Utilities.formatDate(timestamp, timezone, 'yyyy-MM-dd') === date;
+function isMealOnDate(meal, date, timezone) {
+  return isMealOnDateValue(meal, date, function (timestamp) {
+    return Utilities.formatDate(new Date(timestamp), timezone, 'yyyy-MM-dd');
+  });
 }
 
-function listMealsForTodayUntil(now) {
+function isMealOnDateUntil(meal, date, now, timezone) {
+  return isMealOnDateUntilValue(meal, date, now.getTime(), function (timestamp) {
+    return Utilities.formatDate(new Date(timestamp), timezone, 'yyyy-MM-dd');
+  });
+}
+
+function listMealsForDate(date, timezone) {
+  const sheet = getFoodLogSheet();
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow < 2) {
+    return [];
+  }
+
+  const values = sheet.getRange(2, 1, lastRow - 1, FOOD_LOG_HEADERS.length).getValues();
+
+  return sortMealsByTimestampDescending(values
+    .map(function (row) {
+      return rowToFoodLog(row);
+    })
+    .filter(function (meal) {
+      return isMealOnDate(meal, date, timezone);
+    }));
+}
+
+function listMealsForFeedbackWindow(now) {
   const sheet = getFoodLogSheet();
   const lastRow = sheet.getLastRow();
 
@@ -1563,14 +1606,23 @@ function listMealsForTodayUntil(now) {
       return rowToFoodLog(row);
     })
     .filter(function (meal) {
-      const timestamp = new Date(meal.timestamp);
-
-      if (isNaN(timestamp.getTime()) || timestamp.getTime() > now.getTime()) {
-        return false;
-      }
-
-      return Utilities.formatDate(timestamp, timezone, 'yyyy-MM-dd') === today;
+      return isMealOnDateUntil(meal, today, now, timezone);
     });
+}
+
+function validateDaySnapshotDate(value, now, timezone) {
+  const date = String(value || '').trim();
+
+  if (!isValidDateKey(date)) {
+    throw new Error('確認する日付が不正です。');
+  }
+
+  const today = Utilities.formatDate(now, timezone, 'yyyy-MM-dd');
+  if (!isDateKeyNotAfter(date, today)) {
+    throw new Error('未来の日付は確認できません。');
+  }
+
+  return date;
 }
 
 function listMealsForWindow(windowStartDate, windowEndDate) {
