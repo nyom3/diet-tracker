@@ -276,6 +276,7 @@ export function App(): JSX.Element {
   const [persistedSource, setPersistedSource] = React.useState<MealSource | null>(null);
   const [hasItemBreakdown, setHasItemBreakdown] = React.useState(false);
   const [standaloneTotalActive, setStandaloneTotalActive] = React.useState(false);
+  const [standaloneItemAdded, setStandaloneItemAdded] = React.useState(false);
   const [hasNutrition, setHasNutrition] = React.useState(false);
   const [recentMeals, setRecentMeals] = React.useState<SavedMeal[]>([]);
   const [favorites, setFavorites] = React.useState<FavoriteMeal[]>([]);
@@ -614,6 +615,7 @@ export function App(): JSX.Element {
     setPersistedSource(null);
     setHasItemBreakdown(nextItems.length > 0);
     setStandaloneTotalActive(nextItems.length === 0);
+    setStandaloneItemAdded(false);
     setHasNutrition(true);
     const autoName = [result.display_name, estimationInput, nextItems[0]?.name]
       .map((value) => value?.trim() ?? '')
@@ -721,6 +723,7 @@ export function App(): JSX.Element {
     setPersistedSource(null);
     setHasItemBreakdown(false);
     setStandaloneTotalActive(false);
+    setStandaloneItemAdded(false);
     setHasNutrition(false);
     setSelectedMealId('');
   }
@@ -763,16 +766,23 @@ export function App(): JSX.Element {
   function removeItem(index: number): void {
     const nextItems = items.filter((_, itemIndex) => itemIndex !== index);
     const nextServings = servings.length ? servings.filter((_, itemIndex) => itemIndex !== index) : [];
+    const restoreStandaloneTotal = nextItems.length === 0 && standaloneItemAdded && standaloneTotalActive;
     setItems(nextItems);
     setServings(nextServings);
-    setTotal(calculateTotal(nextItems, nextServings));
-    setStandaloneTotalActive(false);
+    if (restoreStandaloneTotal) {
+      setStandaloneTotalActive(true);
+      setHasItemBreakdown(false);
+    } else {
+      setTotal(calculateTotal(nextItems, nextServings));
+      setStandaloneTotalActive(false);
+    }
+    setStandaloneItemAdded(false);
     setHasNutrition(true);
   }
 
   function addItem(): void {
     const nextItems = [...items, createEmptyNutritionItem()];
-    const preserveStandaloneTotal = items.length === 0 && !hasItemBreakdown && standaloneTotalActive;
+    const preserveStandaloneTotal = items.length === 0 && standaloneTotalActive;
     const nextServings = estimateMode === 'api'
       ? [...(servings.length ? servings : items.map(() => 1)), 1]
       : servings;
@@ -780,6 +790,7 @@ export function App(): JSX.Element {
     setServings(nextServings);
     setHasItemBreakdown(true);
     setStandaloneTotalActive(preserveStandaloneTotal);
+    setStandaloneItemAdded(preserveStandaloneTotal);
     if (!preserveStandaloneTotal) setTotal(calculateTotal(nextItems, nextServings));
     setHasNutrition(true);
   }
@@ -1009,6 +1020,7 @@ export function App(): JSX.Element {
     setPersistedSource(meal.source);
     setHasItemBreakdown(nextItems.length > 0);
     setStandaloneTotalActive(nextItems.length === 0);
+    setStandaloneItemAdded(false);
     setHasNutrition(true);
     draftPausedRef.current = true;
     setStatus({ message: '最近の記録を読み込みました。', type: 'success' });
@@ -1805,6 +1817,7 @@ export function App(): JSX.Element {
                       value={total[key]}
                       onChange={(event) => {
                         setTotal({ ...total, [key]: normalizeNumber(event.target.value) });
+                        setStandaloneTotalActive(true);
                         setHasNutrition(true);
                       }}
                     />
@@ -1822,6 +1835,7 @@ export function App(): JSX.Element {
                   value={total.calories_kcal}
                   onChange={(event) => {
                     setTotal({ ...total, calories_kcal: normalizeNumber(event.target.value) });
+                    setStandaloneTotalActive(true);
                     setHasNutrition(true);
                   }}
                 />
