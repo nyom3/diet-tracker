@@ -287,7 +287,11 @@ function getHomeSnapshot() {
   const now = new Date();
   const timezone = Session.getScriptTimeZone();
   const date = Utilities.formatDate(now, timezone, 'yyyy-MM-dd');
-  const meals = readFoodLogsFromSheet(getFoodLogSheet());
+  const meals = readFoodLogsFromSheet(getFoodLogSheet(), {
+    rangeDays: 7,
+    now: now,
+    recentMealLimit: 3,
+  });
   const todayMeals = sortMealsByTimestampDescending(meals.filter(function (meal) {
     return isMealOnDate(meal, date, timezone);
   }));
@@ -641,7 +645,10 @@ function normalizeCoachInsightRequest(request) {
 }
 
 function getCoachDashboardContext(rangeDays, now) {
-  const meals = readFoodLogsFromSheet(getFoodLogSheet());
+  const meals = readFoodLogsFromSheet(getFoodLogSheet(), {
+    rangeDays: rangeDays,
+    now: now,
+  });
   const goals = getGoals();
   return {
     dashboard: buildCoachDashboardData(rangeDays, now, meals, goals),
@@ -1518,18 +1525,67 @@ function rowToFavorite(row) {
   };
 }
 
-function readFoodLogsFromSheet(sheet) {
+var FOOD_LOG_RANGE_INITIAL_ROWS = 500;
+var FOOD_LOG_RANGE_GROWTH_FACTOR = 4;
+var FOOD_LOG_RANGE_MAX_ATTEMPTS = 3;
+var FOOD_LOG_RANGE_ROWS_PER_DAY = 20;
+
+function foodLogReadInitialRows(rangeDays) {
+  const days = Math.max(1, Math.floor(Number(rangeDays) || 7));
+  return Math.max(FOOD_LOG_RANGE_INITIAL_ROWS, days * FOOD_LOG_RANGE_ROWS_PER_DAY);
+}
+
+function readFoodLogValues(sheet, range) {
+  return sheet.getRange(range.startRow, 1, range.rowCount, FOOD_LOG_HEADERS.length).getValues();
+}
+
+function mapFoodLogRows(values) {
+  return values
+    .map(function (row) { return rowToFoodLog(row); })
+    .filter(function (meal) { return meal.id; });
+}
+
+function readFoodLogsFromSheet(sheet, options) {
   const lastRow = sheet.getLastRow();
 
   if (lastRow < 2) {
     return [];
   }
 
-  return sheet
-    .getRange(2, 1, lastRow - 1, FOOD_LOG_HEADERS.length)
-    .getValues()
-    .map(function (row) { return rowToFoodLog(row); })
-    .filter(function (meal) { return meal.id; });
+  const config = options || {};
+  const now = config.now instanceof Date ? config.now : new Date();
+  const timezone = config.timezone || Session.getScriptTimeZone();
+  const today = Utilities.formatDate(now, timezone, 'yyyy-MM-dd');
+  const recentMealLimit = Math.max(0, Math.floor(Number(config.recentMealLimit) || 0));
+  const initialRows = foodLogReadInitialRows(config.rangeDays);
+  const dateKeyForTimestamp = function (timestamp) {
+    return Utilities.formatDate(new Date(timestamp), timezone, 'yyyy-MM-dd');
+  };
+  let meals = [];
+
+  for (let attempt = 0; attempt < FOOD_LOG_RANGE_MAX_ATTEMPTS; attempt += 1) {
+    const range = resolveFoodLogReadRange(lastRow, attempt, {
+      initialRows: initialRows,
+      growthFactor: FOOD_LOG_RANGE_GROWTH_FACTOR,
+    });
+    meals = mapFoodLogRows(readFoodLogValues(sheet, range));
+
+    if (!recentMealLimit || range.isFull || countRecentMealsForReadValue(
+      meals,
+      now.getTime(),
+      today,
+      dateKeyForTimestamp,
+      recentMealLimit,
+    ) >= recentMealLimit) {
+      return meals;
+    }
+  }
+
+  const fullRange = resolveFoodLogReadRange(lastRow, 0, {
+    initialRows: lastRow - 1,
+    growthFactor: FOOD_LOG_RANGE_GROWTH_FACTOR,
+  });
+  return mapFoodLogRows(readFoodLogValues(sheet, fullRange));
 }
 
 function readFavoritesFromSheet(sheet) {
@@ -1615,20 +1671,14 @@ function validateDaySnapshotDate(value, now, timezone) {
 
 function listMealsForWindow(windowStartDate, windowEndDate) {
   const sheet = getFoodLogSheet();
-  const lastRow = sheet.getLastRow();
-
-  if (lastRow < 2) {
-    return [];
-  }
+  const rangeDays = Math.max(1, Math.ceil((startOfLocalDay(windowEndDate).getTime() -
+    startOfLocalDay(windowStartDate).getTime()) / (24 * 60 * 60 * 1000)) + 1);
+  const meals = readFoodLogsFromSheet(sheet, { rangeDays: rangeDays });
 
   const startTime = startOfLocalDay(windowStartDate).getTime();
   const endTime = windowEndDate.getTime();
-  const values = sheet.getRange(2, 1, lastRow - 1, FOOD_LOG_HEADERS.length).getValues();
 
-  return values
-    .map(function (row) {
-      return rowToFoodLog(row);
-    })
+  return meals
     .filter(function (meal) {
       const timestamp = new Date(meal.timestamp);
 
