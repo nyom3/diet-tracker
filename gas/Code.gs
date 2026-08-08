@@ -1925,6 +1925,7 @@ function normalizeNutritionItem(item) {
   return {
     name: name || '品名未設定',
     quantity_text: String(rawItem.quantity_text || '').trim(),
+    // basisの40文字上限はこのサーバー境界を正本とする。
     basis: String(rawItem.basis || '').trim().slice(0, 40),
     calories_kcal: toNonNegativeNumber(rawItem.calories_kcal, 'カロリー'),
     protein_g: toNonNegativeNumber(rawItem.protein_g, 'タンパク質'),

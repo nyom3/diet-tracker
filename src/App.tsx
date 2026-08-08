@@ -101,14 +101,15 @@ const defaultPfcRatio = {
 };
 
 type NutritionSnapshot = {
-  items: Array<Pick<NutritionItem, 'name' | 'calories_kcal' | 'protein_g' | 'fat_g' | 'carbs_g'>>;
+  items: Array<Pick<NutritionItem, 'name' | 'quantity_text' | 'calories_kcal' | 'protein_g' | 'fat_g' | 'carbs_g'>>;
   servings: number[];
 };
 
 function createNutritionSnapshot(items: NutritionItem[], servings: number[]): NutritionSnapshot {
   return {
-    items: items.map(({ name, calories_kcal, protein_g, fat_g, carbs_g }) => ({
+    items: items.map(({ name, quantity_text, calories_kcal, protein_g, fat_g, carbs_g }) => ({
       name,
+      quantity_text,
       calories_kcal,
       protein_g,
       fat_g,
@@ -273,6 +274,8 @@ export function App(): JSX.Element {
   const [servings, setServings] = React.useState<number[]>([]);
   const [apiEstimateSnapshot, setApiEstimateSnapshot] = React.useState<NutritionSnapshot | null>(null);
   const [persistedSource, setPersistedSource] = React.useState<MealSource | null>(null);
+  const [hasItemBreakdown, setHasItemBreakdown] = React.useState(false);
+  const [standaloneTotalActive, setStandaloneTotalActive] = React.useState(false);
   const [hasNutrition, setHasNutrition] = React.useState(false);
   const [recentMeals, setRecentMeals] = React.useState<SavedMeal[]>([]);
   const [favorites, setFavorites] = React.useState<FavoriteMeal[]>([]);
@@ -323,7 +326,7 @@ export function App(): JSX.Element {
     : mealText.trim();
   const savedDescription = displayName.trim();
   const manualPrompt = createManualPrompt(inputMode, estimationInput);
-  const effectiveTotal = items.length > 0 ? calculateTotal(items, servings) : total;
+  const effectiveTotal = standaloneTotalActive || items.length === 0 ? total : calculateTotal(items, servings);
   const visibleRecentMeals = isRecentExpanded
     ? recentMeals
     : recentMeals.slice(0, recentMealsPreviewCount);
@@ -347,6 +350,7 @@ export function App(): JSX.Element {
       description: savedDescription,
       total: effectiveTotal,
       itemCount: items.length,
+      hasItemBreakdown,
     }) === null;
   const saveBlockedReason = busy === null
     ? getSaveBlockedReason({
@@ -358,6 +362,7 @@ export function App(): JSX.Element {
       description: savedDescription,
       total: effectiveTotal,
       itemCount: items.length,
+      hasItemBreakdown,
     })
     : null;
 
@@ -607,6 +612,8 @@ export function App(): JSX.Element {
     setServings(nextServings);
     setApiEstimateSnapshot(enableStepper ? createNutritionSnapshot(nextItems, nextServings) : null);
     setPersistedSource(null);
+    setHasItemBreakdown(nextItems.length > 0);
+    setStandaloneTotalActive(nextItems.length === 0);
     setHasNutrition(true);
     const autoName = [result.display_name, estimationInput, nextItems[0]?.name]
       .map((value) => value?.trim() ?? '')
@@ -712,6 +719,8 @@ export function App(): JSX.Element {
     setServings([]);
     setApiEstimateSnapshot(null);
     setPersistedSource(null);
+    setHasItemBreakdown(false);
+    setStandaloneTotalActive(false);
     setHasNutrition(false);
     setSelectedMealId('');
   }
@@ -721,6 +730,7 @@ export function App(): JSX.Element {
     nextServings[index] = Math.max(0.1, Math.round(((nextServings[index] || 1) + delta) * 10) / 10);
     setServings(nextServings);
     setTotal(calculateTotal(items, nextServings));
+    setStandaloneTotalActive(false);
     setHasNutrition(true);
   }
 
@@ -746,6 +756,7 @@ export function App(): JSX.Element {
     ));
     setItems(nextItems);
     setTotal(calculateTotal(nextItems, servings));
+    setStandaloneTotalActive(false);
     setHasNutrition(true);
   }
 
@@ -755,17 +766,21 @@ export function App(): JSX.Element {
     setItems(nextItems);
     setServings(nextServings);
     setTotal(calculateTotal(nextItems, nextServings));
+    setStandaloneTotalActive(false);
     setHasNutrition(true);
   }
 
   function addItem(): void {
     const nextItems = [...items, createEmptyNutritionItem()];
+    const preserveStandaloneTotal = items.length === 0 && !hasItemBreakdown && standaloneTotalActive;
     const nextServings = estimateMode === 'api'
       ? [...(servings.length ? servings : items.map(() => 1)), 1]
       : servings;
     setItems(nextItems);
     setServings(nextServings);
-    setTotal(calculateTotal(nextItems, nextServings));
+    setHasItemBreakdown(true);
+    setStandaloneTotalActive(preserveStandaloneTotal);
+    if (!preserveStandaloneTotal) setTotal(calculateTotal(nextItems, nextServings));
     setHasNutrition(true);
   }
 
@@ -992,6 +1007,8 @@ export function App(): JSX.Element {
     setServings(nextServings);
     setApiEstimateSnapshot(meal.source === 'manual' ? null : createNutritionSnapshot(nextItems, nextServings));
     setPersistedSource(meal.source);
+    setHasItemBreakdown(nextItems.length > 0);
+    setStandaloneTotalActive(nextItems.length === 0);
     setHasNutrition(true);
     draftPausedRef.current = true;
     setStatus({ message: '最近の記録を読み込みました。', type: 'success' });
@@ -2303,6 +2320,7 @@ function normalizeTotal(result: Partial<NutritionTotal>): NutritionTotal {
 function normalizeItem(item: Partial<NutritionItem>): NutritionItem {
   return {
     name: String(item.name || '品名未設定'),
+    // サーバー境界の切り詰めを画面上でも再現し、保存後の表示差を防ぐ。
     quantity_text: String(item.quantity_text || '').trim(),
     basis: String(item.basis || '').trim().slice(0, 40),
     calories_kcal: normalizeNumber(item.calories_kcal),

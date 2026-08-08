@@ -27,6 +27,7 @@ function validInput(overrides = {}) {
     description: '牛丼',
     total: validTotal,
     itemCount: 1,
+    hasItemBreakdown: true,
     ...overrides,
   };
 }
@@ -70,5 +71,12 @@ test('品目が0件の場合は追加を促す', () => {
   assert.equal(
     getSaveBlockedReason(validInput({ itemCount: 0 })),
     '品目を1件以上追加してください',
+  );
+});
+
+test('品目を使わない直接入力は従来どおり保存できる', () => {
+  assert.equal(
+    getSaveBlockedReason(validInput({ itemCount: 0, hasItemBreakdown: false })),
+    null,
   );
 });

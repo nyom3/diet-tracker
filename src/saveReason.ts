@@ -9,6 +9,7 @@ export type SaveReasonInput = {
   description: string;
   total: NutritionTotal;
   itemCount: number;
+  hasItemBreakdown: boolean;
 };
 
 const nutritionKeys: Array<keyof NutritionTotal> = [
@@ -37,7 +38,7 @@ export function getSaveBlockedReason(input: SaveReasonInput): string | null {
     return '食事名を入力してください';
   }
 
-  if (input.itemCount === 0) {
+  if (input.itemCount === 0 && input.hasItemBreakdown) {
     return '品目を1件以上追加してください';
   }
 
