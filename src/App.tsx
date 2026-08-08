@@ -609,7 +609,7 @@ export function App(): JSX.Element {
 
     try {
       const wasEditing = Boolean(selectedMealId);
-      const savedDate = wasEditing ? datetime.slice(0, 10) : todayDateKey;
+      const savedDate = datetime.slice(0, 10);
       const payload = buildPayload({
         datetime,
         mealType,
@@ -934,7 +934,7 @@ export function App(): JSX.Element {
       const result = await processInput(buildQuickPayload(meal));
       invalidateDashboardCache();
       await loadHomeSnapshot(true);
-      setSelectedTodayDate(createDateKey(new Date()));
+      setSelectedTodayDate(todayDateKey);
       setDaySnapshot(null);
       showQuickUndo(result.id, meal.description);
       setStatus({ message: 'クイック登録しました。', type: 'success' });
