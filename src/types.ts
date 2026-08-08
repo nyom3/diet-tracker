@@ -1,11 +1,14 @@
 export type MealType = '朝' | '昼' | '夜' | '間食';
 export type InputMode = 'photo' | 'text';
 export type EstimateMode = 'api' | 'manual';
+export type MealSource = EstimateMode | 'api_edited';
 
 export type NutritionKey = 'calories_kcal' | 'protein_g' | 'fat_g' | 'carbs_g';
 
 export type NutritionItem = {
   name: string;
+  quantity_text: string;
+  basis: string;
   calories_kcal: number;
   protein_g: number;
   fat_g: number;
@@ -54,7 +57,7 @@ export type SaveMealPayload = {
   protein_g: number | string;
   fat_g: number | string;
   carbs_g: number | string;
-  source: EstimateMode;
+  source: MealSource;
   breakdown_json: string;
 };
 

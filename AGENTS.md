@@ -47,8 +47,8 @@ diet-tracker は、食事カロリーを記録し続けられる状態を作る�
 | F | protein_g | 数値 |
 | G | fat_g | 数値 |
 | H | carbs_g | 数値 |
-| I | source | api / manual |
-| J | breakdown_json | JSON 文字列（品ごとの items 配列） |
+| I | source | api / manual / api_edited |
+| J | breakdown_json | JSON 文字列（品ごとの items 配列。各要素は `name` / `quantity_text` / `basis` / PFC） |
 
 既存の `id` 未導入シートは、`ensureFoodLogHeaders()` が A 列を挿入し、既存行へ id を後埋めする。
 

@@ -56,6 +56,7 @@ import type {
   HomeSnapshot,
   InputMode,
   MealType,
+  MealSource,
   NutritionItem,
   NutritionKey,
   NutritionResult,
@@ -98,6 +99,46 @@ const defaultPfcRatio = {
   fat: 20,
   carbs: 50,
 };
+
+type NutritionSnapshot = {
+  items: Array<Pick<NutritionItem, 'name' | 'calories_kcal' | 'protein_g' | 'fat_g' | 'carbs_g'>>;
+  servings: number[];
+};
+
+function createNutritionSnapshot(items: NutritionItem[], servings: number[]): NutritionSnapshot {
+  return {
+    items: items.map(({ name, calories_kcal, protein_g, fat_g, carbs_g }) => ({
+      name,
+      calories_kcal,
+      protein_g,
+      fat_g,
+      carbs_g,
+    })),
+    servings: items.map((_, index) => servings[index] || 1),
+  };
+}
+
+function hasNutritionSnapshotChanged(
+  snapshot: NutritionSnapshot | null,
+  items: NutritionItem[],
+  servings: number[],
+): boolean {
+  if (!snapshot) return false;
+  const current = createNutritionSnapshot(items, servings);
+  return JSON.stringify(current) !== JSON.stringify(snapshot);
+}
+
+function resolveMealSource(
+  estimateMode: EstimateMode,
+  snapshot: NutritionSnapshot | null,
+  items: NutritionItem[],
+  servings: number[],
+  persistedSource: MealSource | null,
+): MealSource {
+  if (estimateMode === 'manual') return 'manual';
+  if (persistedSource === 'api_edited') return 'api_edited';
+  return hasNutritionSnapshotChanged(snapshot, items, servings) ? 'api_edited' : 'api';
+}
 const emptyTargets: NutritionTargets = {
   calories_kcal: null,
   protein_g: null,
@@ -230,6 +271,8 @@ export function App(): JSX.Element {
   const [total, setTotal] = React.useState<NutritionTotal>(emptyTotal);
   const [items, setItems] = React.useState<NutritionItem[]>([]);
   const [servings, setServings] = React.useState<number[]>([]);
+  const [apiEstimateSnapshot, setApiEstimateSnapshot] = React.useState<NutritionSnapshot | null>(null);
+  const [persistedSource, setPersistedSource] = React.useState<MealSource | null>(null);
   const [hasNutrition, setHasNutrition] = React.useState(false);
   const [recentMeals, setRecentMeals] = React.useState<SavedMeal[]>([]);
   const [favorites, setFavorites] = React.useState<FavoriteMeal[]>([]);
@@ -303,6 +346,7 @@ export function App(): JSX.Element {
       hasNutrition,
       description: savedDescription,
       total: effectiveTotal,
+      itemCount: items.length,
     }) === null;
   const saveBlockedReason = busy === null
     ? getSaveBlockedReason({
@@ -313,6 +357,7 @@ export function App(): JSX.Element {
       hasNutrition,
       description: savedDescription,
       total: effectiveTotal,
+      itemCount: items.length,
     })
     : null;
 
@@ -555,10 +600,13 @@ export function App(): JSX.Element {
   function applyNutrition(result: NutritionResult, enableStepper: boolean): void {
     const nextTotal = normalizeTotal(result.total || result);
     const nextItems = Array.isArray(result.items) ? result.items.map(normalizeItem) : [];
+    const nextServings = enableStepper ? nextItems.map(() => 1) : [];
 
     setTotal(nextTotal);
     setItems(nextItems);
-    setServings(enableStepper ? nextItems.map(() => 1) : []);
+    setServings(nextServings);
+    setApiEstimateSnapshot(enableStepper ? createNutritionSnapshot(nextItems, nextServings) : null);
+    setPersistedSource(null);
     setHasNutrition(true);
     const autoName = [result.display_name, estimationInput, nextItems[0]?.name]
       .map((value) => value?.trim() ?? '')
@@ -615,6 +663,8 @@ export function App(): JSX.Element {
         mealType,
         description: savedDescription,
         estimateMode,
+        apiEstimateSnapshot,
+        persistedSource,
         total: effectiveTotal,
         items,
         servings,
@@ -660,6 +710,8 @@ export function App(): JSX.Element {
     setTotal(emptyTotal);
     setItems([]);
     setServings([]);
+    setApiEstimateSnapshot(null);
+    setPersistedSource(null);
     setHasNutrition(false);
     setSelectedMealId('');
   }
@@ -681,12 +733,39 @@ export function App(): JSX.Element {
     setHasNutrition(true);
   }
 
+  function updateItemQuantity(index: number, value: string): void {
+    setItems((current) => current.map((item, itemIndex) => (
+      itemIndex === index ? { ...item, quantity_text: value } : item
+    )));
+    setHasNutrition(true);
+  }
+
   function updateItemNutrition(index: number, key: NutritionKey, value: string): void {
     const nextItems = items.map((item, itemIndex) => (
       itemIndex === index ? { ...item, [key]: normalizeNumber(value) } : item
     ));
     setItems(nextItems);
     setTotal(calculateTotal(nextItems, servings));
+    setHasNutrition(true);
+  }
+
+  function removeItem(index: number): void {
+    const nextItems = items.filter((_, itemIndex) => itemIndex !== index);
+    const nextServings = servings.length ? servings.filter((_, itemIndex) => itemIndex !== index) : [];
+    setItems(nextItems);
+    setServings(nextServings);
+    setTotal(calculateTotal(nextItems, nextServings));
+    setHasNutrition(true);
+  }
+
+  function addItem(): void {
+    const nextItems = [...items, createEmptyNutritionItem()];
+    const nextServings = estimateMode === 'api'
+      ? [...(servings.length ? servings : items.map(() => 1)), 1]
+      : servings;
+    setItems(nextItems);
+    setServings(nextServings);
+    setTotal(calculateTotal(nextItems, nextServings));
     setHasNutrition(true);
   }
 
@@ -908,8 +987,11 @@ export function App(): JSX.Element {
       fat_g: meal.fat_g,
       carbs_g: meal.carbs_g,
     });
+    const nextServings = nextItems.map(() => 1);
     setItems(nextItems);
-    setServings(nextItems.map(() => 1));
+    setServings(nextServings);
+    setApiEstimateSnapshot(meal.source === 'manual' ? null : createNutritionSnapshot(nextItems, nextServings));
+    setPersistedSource(meal.source);
     setHasNutrition(true);
     draftPausedRef.current = true;
     setStatus({ message: '最近の記録を読み込みました。', type: 'success' });
@@ -1666,7 +1748,7 @@ export function App(): JSX.Element {
                 <span>JSON</span>
                 <textarea
                   value={manualJson}
-                  placeholder='{"items":[{"name":"牛丼","calories_kcal":652,"protein_g":24,"fat_g":18,"carbs_g":92}],"total":{"calories_kcal":652,"protein_g":24,"fat_g":18,"carbs_g":92}}'
+                  placeholder='{"items":[{"name":"牛丼","quantity_text":"1人前","basis":"牛丼1人前として計算","calories_kcal":652,"protein_g":24,"fat_g":18,"carbs_g":92}],"total":{"calories_kcal":652,"protein_g":24,"fat_g":18,"carbs_g":92}}'
                   onChange={(event) => setManualJson(event.target.value)}
                 />
               </label>
@@ -1731,13 +1813,17 @@ export function App(): JSX.Element {
           )}
         </section>
 
-        {items.length > 0 && (
+        {(items.length > 0 || hasNutrition) && (
           <section className="panel record-breakdown-panel">
             <div className="section-heading">
               <div>
                 <span className="section-label">内訳</span>
                 <h2>品目ごとの調整</h2>
               </div>
+              <button className="action-button secondary-action item-add-button" type="button" onClick={addItem}>
+                <Plus size={18} />
+                品目を追加
+              </button>
             </div>
             <ul className="item-list">
               {items.map((item, index) => {
@@ -1753,6 +1839,20 @@ export function App(): JSX.Element {
                         />
                       </label>
                       <span>{Math.round(item.calories_kcal * serving)} kcal</span>
+                    </div>
+                    <div className="item-context-grid">
+                      <label className="field item-quantity-field">
+                        <span>分量</span>
+                        <input
+                          value={item.quantity_text}
+                          placeholder="例: 茶碗1杯（約150g）"
+                          onChange={(event) => updateItemQuantity(index, event.target.value)}
+                        />
+                      </label>
+                      <div className="item-basis-field">
+                        <span>根拠</span>
+                        <p>{item.basis || '根拠なし'}</p>
+                      </div>
                     </div>
                     <div className="item-nutrition-grid">
                       {nutritionKeys.map(({ key, label, unit, step }) => (
@@ -1784,6 +1884,14 @@ export function App(): JSX.Element {
                         </button>
                       </div>
                     )}
+                    <button
+                      className="item-remove-button"
+                      type="button"
+                      onClick={() => removeItem(index)}
+                    >
+                      <Trash2 size={16} />
+                      この品目を削除
+                    </button>
                   </li>
                 );
               })}
@@ -2077,6 +2185,8 @@ function buildPayload({
   mealType,
   description,
   estimateMode,
+  apiEstimateSnapshot,
+  persistedSource,
   total,
   items,
   servings,
@@ -2085,6 +2195,8 @@ function buildPayload({
   mealType: MealType;
   description: string;
   estimateMode: EstimateMode;
+  apiEstimateSnapshot: NutritionSnapshot | null;
+  persistedSource: MealSource | null;
   total: NutritionTotal;
   items: NutritionItem[];
   servings: number[];
@@ -2117,7 +2229,7 @@ function buildPayload({
     protein_g: total.protein_g,
     fat_g: total.fat_g,
     carbs_g: total.carbs_g,
-    source: estimateMode,
+    source: resolveMealSource(estimateMode, apiEstimateSnapshot, items, servings, persistedSource),
     breakdown_json: JSON.stringify(applyServings(items, servings)),
   };
 }
@@ -2170,7 +2282,7 @@ function buildGoalsPayload(targets: NutritionTotal, targetWeightInput: string): 
 
 function createManualPrompt(inputMode: InputMode, description: string): string {
   const schema =
-    '{"items":[{"name":"品名","calories_kcal":数値,"protein_g":数値,"fat_g":数値,"carbs_g":数値}],"total":{"calories_kcal":数値,"protein_g":数値,"fat_g":数値,"carbs_g":数値}}';
+    '{"items":[{"name":"品名","quantity_text":"分量（例: 茶碗1杯 約150g）","basis":"根拠（40文字以内）","calories_kcal":数値,"protein_g":数値,"fat_g":数値,"carbs_g":数値}],"total":{"calories_kcal":数値,"protein_g":数値,"fat_g":数値,"carbs_g":数値}}';
 
   if (inputMode === 'photo') {
     return `この画像の食事の品ごとのカロリーとPFCを推定してください。JSONのみ回答してください。\n\n補足: ${description || 'なし'}\n\n${schema}`;
@@ -2191,6 +2303,8 @@ function normalizeTotal(result: Partial<NutritionTotal>): NutritionTotal {
 function normalizeItem(item: Partial<NutritionItem>): NutritionItem {
   return {
     name: String(item.name || '品名未設定'),
+    quantity_text: String(item.quantity_text || '').trim(),
+    basis: String(item.basis || '').trim().slice(0, 40),
     calories_kcal: normalizeNumber(item.calories_kcal),
     protein_g: normalizeNumber(item.protein_g),
     fat_g: normalizeNumber(item.fat_g),
@@ -2237,12 +2351,26 @@ function applyServings(items: NutritionItem[], servings: number[]): NutritionIte
     const serving = servings[index] || 1;
     return {
       name: item.name,
+      quantity_text: item.quantity_text,
+      basis: item.basis,
       calories_kcal: roundToTenth(item.calories_kcal * serving),
       protein_g: roundToTenth(item.protein_g * serving),
       fat_g: roundToTenth(item.fat_g * serving),
       carbs_g: roundToTenth(item.carbs_g * serving),
     };
   });
+}
+
+function createEmptyNutritionItem(): NutritionItem {
+  return {
+    name: '品名未設定',
+    quantity_text: '',
+    basis: '',
+    calories_kcal: 0,
+    protein_g: 0,
+    fat_g: 0,
+    carbs_g: 0,
+  };
 }
 
 function roundToTenth(value: number): number {

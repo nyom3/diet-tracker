@@ -981,9 +981,10 @@ function estimateCalories(inputText, imageBase64, imageMimeType, imageWidthPx, i
   const prompt =
     'あなたは栄養士です。食事の説明または画像から、品ごとのカロリーとPFCを推定してください。\n' +
     'display_name は食事全体を表す短い日本語の名前（10文字以内目安）にしてください。\n' +
+    '各品目に quantity_text（人が読める分量）と basis（数値の短い根拠、40文字以内）を必ず付けてください。省略する場合は空文字にしてください。\n' +
     '必ずJSONのみで回答してください。他の文字列を含めないでください。\n' +
     '{"display_name":"食事全体を表す短い日本語の名前（10文字以内目安、例: 牛丼定食）",' +
-    '"items":[{"name":"品名","calories_kcal":数値,"protein_g":数値,"fat_g":数値,"carbs_g":数値}],' +
+    '"items":[{"name":"品名","quantity_text":"分量（例: 茶碗1杯 約150g）","basis":"根拠（40文字以内）","calories_kcal":数値,"protein_g":数値,"fat_g":数値,"carbs_g":数値}],' +
     '"total":{"calories_kcal":数値,"protein_g":数値,"fat_g":数値,"carbs_g":数値}}\n\n' +
     (text ? '食事: ' + text : '画像の食事を推定してください。');
 
@@ -1817,7 +1818,7 @@ function validateFoodLogInput(data) {
     throw new Error('食事の説明を入力してください。');
   }
 
-  if (['api', 'manual'].indexOf(source) === -1) {
+  if (['api', 'manual', 'api_edited'].indexOf(source) === -1) {
     throw new Error('推定方法が不正です。');
   }
 
@@ -1923,6 +1924,8 @@ function normalizeNutritionItem(item) {
 
   return {
     name: name || '品名未設定',
+    quantity_text: String(rawItem.quantity_text || '').trim(),
+    basis: String(rawItem.basis || '').trim().slice(0, 40),
     calories_kcal: toNonNegativeNumber(rawItem.calories_kcal, 'カロリー'),
     protein_g: toNonNegativeNumber(rawItem.protein_g, 'タンパク質'),
     fat_g: toNonNegativeNumber(rawItem.fat_g, '脂質'),
