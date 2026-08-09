@@ -135,6 +135,36 @@ function tryOpenAiVisionEstimate(promptText, strippedImageBase64, imageMimeType,
   });
 }
 
+// 品目単位の修正・追加。食事全体推定とはrequest_kindを分け、同じ予算ゲートを通す。
+function tryOpenAiItemRequest(promptText, strippedImageBase64, imageMimeType, widthPx, heightPx, requestKind) {
+  var hasImage = !!strippedImageBase64;
+  var reservationTokens = openAiCalculateReservation({
+    promptText: promptText,
+    maxOutputTokens: OPENAI_TEXT_MAX_COMPLETION_TOKENS,
+    imageReservationTokens: hasImage ? OPENAI_VISION_IMAGE_RESERVATION_TOKENS : 0,
+  });
+
+  var content = [{ type: 'text', text: promptText }];
+  if (hasImage) {
+    content.push({
+      type: 'image_url',
+      image_url: {
+        url: 'data:' + imageMimeType + ';base64,' + strippedImageBase64,
+      },
+    });
+  }
+
+  return attemptOpenAiChat({
+    group: OPENAI_CALL_GROUP,
+    reservationTokens: reservationTokens,
+    messages: [{ role: 'user', content: hasImage ? content : promptText }],
+    jsonMode: true,
+    reasoningEffort: 'low',
+    maxCompletionTokens: OPENAI_TEXT_MAX_COMPLETION_TOKENS,
+    requestKind: requestKind,
+  });
+}
+
 // テキストのみのフィードバック生成(当日/週次)。
 function tryOpenAiTextRequest(promptText, reasoningLevel) {
   var reservationTokens = openAiCalculateReservation({
