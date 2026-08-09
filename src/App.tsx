@@ -41,7 +41,7 @@ import {
   summarizeTodayFeedback,
   updateMeal,
 } from './gasClient';
-import { prepareSelectedImage, readSelectedImage, type PreparedImage } from './imageProcessing';
+import { emptyImagePayload, prepareSelectedImage, readSelectedImage, type PreparedImage } from './imageProcessing';
 import type {
   AiProviderMode,
   AiStatus,
@@ -635,6 +635,11 @@ export function App(): JSX.Element {
     setStandaloneTotalActive(nextItems.length === 0);
     setStandaloneItemAdded(false);
     setHasNutrition(true);
+    setItemAiUndo(null);
+    setItemAiPromptIndex(null);
+    setItemAiInstruction('');
+    setItemAiAddPromptOpen(false);
+    setItemAiAddInstruction('');
     const autoName = [result.display_name, estimationInput, nextItems[0]?.name]
       .map((value) => value?.trim() ?? '')
       .find(Boolean);
@@ -798,7 +803,9 @@ export function App(): JSX.Element {
     try {
       setBusy('item-ai');
       setStatus({ message: '品目をAIで修正中です。' });
-      const image = readSelectedImage(inputMode, selectedImage, photoNote);
+      const image = inputMode === 'photo' && selectedImage
+        ? readSelectedImage(inputMode, selectedImage, photoNote)
+        : emptyImagePayload;
       const result = await refineNutritionItem({
         operation: 'edit',
         instruction,
@@ -844,7 +851,9 @@ export function App(): JSX.Element {
     try {
       setBusy('item-ai');
       setStatus({ message: '品目をAIで追加中です。' });
-      const image = readSelectedImage(inputMode, selectedImage, photoNote);
+      const image = inputMode === 'photo' && selectedImage
+        ? readSelectedImage(inputMode, selectedImage, photoNote)
+        : emptyImagePayload;
       const result = await refineNutritionItem({
         operation: 'add',
         instruction,
@@ -857,15 +866,20 @@ export function App(): JSX.Element {
       });
       const nextItem = normalizeItem(result.item);
       const nextItems = appendNutritionItem(items, nextItem);
-      const nextServings = servings.length ? [...servings, 1] : [];
+      const nextServings = estimateMode === 'api'
+        ? [...(servings.length ? servings : items.map(() => 1)), 1]
+        : servings;
+      const preserveStandaloneTotal = items.length === 0 && standaloneTotalActive;
       setItemAiUndo(createItemAiUndoSnapshot());
       setItems(nextItems);
       setServings(nextServings);
-      setTotal(calculateTotal(nextItems, nextServings));
+      if (!preserveStandaloneTotal) {
+        setTotal(calculateTotal(nextItems, nextServings));
+      }
       setPersistedSource('api_edited');
       setHasItemBreakdown(true);
-      setStandaloneTotalActive(false);
-      setStandaloneItemAdded(false);
+      setStandaloneTotalActive(preserveStandaloneTotal);
+      setStandaloneItemAdded(preserveStandaloneTotal);
       setHasNutrition(true);
       setItemAiAddPromptOpen(false);
       setItemAiAddInstruction('');
@@ -937,13 +951,15 @@ export function App(): JSX.Element {
     setStandaloneItemAdded(false);
     setHasNutrition(true);
     setItemAiUndo(null);
+    setItemAiPromptIndex(null);
+    setItemAiInstruction('');
   }
 
   function addItem(): void {
     const nextItems = [...items, createEmptyNutritionItem()];
     const preserveStandaloneTotal = items.length === 0 && standaloneTotalActive;
-    const nextServings = estimateMode === 'api' && servings.length
-      ? [...servings, 1]
+    const nextServings = estimateMode === 'api'
+      ? [...(servings.length ? servings : items.map(() => 1)), 1]
       : servings;
     setItems(nextItems);
     setServings(nextServings);
@@ -2116,7 +2132,12 @@ export function App(): JSX.Element {
                           type="button"
                           disabled={busy !== null}
                           onClick={() => {
-                            setItemAiPromptIndex((current) => current === index ? null : index);
+                            if (itemAiPromptIndex === index) {
+                              setItemAiPromptIndex(null);
+                            } else {
+                              setItemAiPromptIndex(index);
+                            }
+                            setItemAiInstruction('');
                             setItemAiAddPromptOpen(false);
                           }}
                         >
@@ -2179,7 +2200,7 @@ export function App(): JSX.Element {
                     <small className="item-serving-hint">
                       入力値は1人前あたり。現在の合計は {Math.round(item.calories_kcal * serving)} kcal です。
                     </small>
-                    {estimateMode === 'api' && servings.length > 0 && (
+                    {estimateMode === 'api' && (
                       <div className="stepper" aria-label={`${item.name}の人前`}>
                         <button type="button" onClick={() => updateServing(index, -0.1)}>
                           <Minus size={16} />
