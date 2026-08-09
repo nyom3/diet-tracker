@@ -34,13 +34,14 @@ import {
   listFavorites,
   listRecentMeals,
   processInput,
+  refineNutritionItem,
   removeFavorite,
   saveGoals,
   setAiProviderMode,
   summarizeTodayFeedback,
   updateMeal,
 } from './gasClient';
-import { prepareSelectedImage, readSelectedImage, type PreparedImage } from './imageProcessing';
+import { emptyImagePayload, prepareSelectedImage, readSelectedImage, type PreparedImage } from './imageProcessing';
 import type {
   AiProviderMode,
   AiStatus,
@@ -74,6 +75,7 @@ import { RecordView } from './views/RecordView';
 import { TodayView } from './views/TodayView';
 import { TrendView } from './views/TrendView';
 import { getSaveBlockedReason } from './saveReason';
+import { appendNutritionItem, replaceNutritionItemAt } from './nutritionItemAi';
 
 const mealTypes: MealType[] = ['朝', '昼', '夜', '間食'];
 const recentMealsPreviewCount = 3;
@@ -153,6 +155,17 @@ type PhotoStatus = 'idle' | 'processing' | 'ready' | 'error';
 type QuickUndo = {
   id: string;
   description: string;
+};
+
+type ItemAiUndoSnapshot = {
+  items: NutritionItem[];
+  servings: number[];
+  total: NutritionTotal;
+  apiEstimateSnapshot: NutritionSnapshot | null;
+  persistedSource: MealSource | null;
+  hasItemBreakdown: boolean;
+  standaloneTotalActive: boolean;
+  standaloneItemAdded: boolean;
 };
 
 function summarizeAiStatusLine(aiStatus: AiStatus | null): string {
@@ -277,6 +290,11 @@ export function App(): JSX.Element {
   const [hasItemBreakdown, setHasItemBreakdown] = React.useState(false);
   const [standaloneTotalActive, setStandaloneTotalActive] = React.useState(false);
   const [standaloneItemAdded, setStandaloneItemAdded] = React.useState(false);
+  const [itemAiPromptIndex, setItemAiPromptIndex] = React.useState<number | null>(null);
+  const [itemAiInstruction, setItemAiInstruction] = React.useState('');
+  const [itemAiAddPromptOpen, setItemAiAddPromptOpen] = React.useState(false);
+  const [itemAiAddInstruction, setItemAiAddInstruction] = React.useState('');
+  const [itemAiUndo, setItemAiUndo] = React.useState<ItemAiUndoSnapshot | null>(null);
   const [hasNutrition, setHasNutrition] = React.useState(false);
   const [recentMeals, setRecentMeals] = React.useState<SavedMeal[]>([]);
   const [favorites, setFavorites] = React.useState<FavoriteMeal[]>([]);
@@ -307,7 +325,7 @@ export function App(): JSX.Element {
   const [aiModeSwitching, setAiModeSwitching] = React.useState(false);
   const [status, setStatus] = React.useState<{ message: string; type?: 'success' | 'error' }>({ message: '' });
   const [busy, setBusy] = React.useState<
-    'estimate' | 'save' | 'quick' | 'favorite' | 'removeFavorite' | 'feedback' | 'targets' | 'coachAction' | null
+    'estimate' | 'item-ai' | 'save' | 'quick' | 'favorite' | 'removeFavorite' | 'feedback' | 'targets' | 'coachAction' | null
   >(null);
   const [quickUndo, setQuickUndo] = React.useState<QuickUndo | null>(null);
   const draftPausedRef = React.useRef(true);
@@ -617,6 +635,11 @@ export function App(): JSX.Element {
     setStandaloneTotalActive(nextItems.length === 0);
     setStandaloneItemAdded(false);
     setHasNutrition(true);
+    setItemAiUndo(null);
+    setItemAiPromptIndex(null);
+    setItemAiInstruction('');
+    setItemAiAddPromptOpen(false);
+    setItemAiAddInstruction('');
     const autoName = [result.display_name, estimationInput, nextItems[0]?.name]
       .map((value) => value?.trim() ?? '')
       .find(Boolean);
@@ -726,6 +749,151 @@ export function App(): JSX.Element {
     setStandaloneItemAdded(false);
     setHasNutrition(false);
     setSelectedMealId('');
+    setItemAiPromptIndex(null);
+    setItemAiInstruction('');
+    setItemAiAddPromptOpen(false);
+    setItemAiAddInstruction('');
+    setItemAiUndo(null);
+  }
+
+  function createItemAiUndoSnapshot(): ItemAiUndoSnapshot {
+    return {
+      items: items.map((item) => ({ ...item })),
+      servings: [...servings],
+      total: { ...total },
+      apiEstimateSnapshot: apiEstimateSnapshot
+        ? {
+          items: apiEstimateSnapshot.items.map((item) => ({ ...item })),
+          servings: [...apiEstimateSnapshot.servings],
+        }
+        : null,
+      persistedSource,
+      hasItemBreakdown,
+      standaloneTotalActive,
+      standaloneItemAdded,
+    };
+  }
+
+  function handleUndoItemAi(): void {
+    if (!itemAiUndo) return;
+    setItems(itemAiUndo.items.map((item) => ({ ...item })));
+    setServings([...itemAiUndo.servings]);
+    setTotal({ ...itemAiUndo.total });
+    setApiEstimateSnapshot(itemAiUndo.apiEstimateSnapshot
+      ? {
+        items: itemAiUndo.apiEstimateSnapshot.items.map((item) => ({ ...item })),
+        servings: [...itemAiUndo.apiEstimateSnapshot.servings],
+      }
+      : null);
+    setPersistedSource(itemAiUndo.persistedSource);
+    setHasItemBreakdown(itemAiUndo.hasItemBreakdown);
+    setStandaloneTotalActive(itemAiUndo.standaloneTotalActive);
+    setStandaloneItemAdded(itemAiUndo.standaloneItemAdded);
+    setItemAiUndo(null);
+    setStatus({ message: '直前のAI変更を元に戻しました。', type: 'success' });
+  }
+
+  async function handleAiEditItem(index: number): Promise<void> {
+    const instruction = itemAiInstruction.trim();
+    if (!instruction || !items[index]) {
+      setStatus({ message: '品目の訂正内容を入力してください。', type: 'error' });
+      return;
+    }
+
+    try {
+      setBusy('item-ai');
+      setStatus({ message: '品目をAIで修正中です。' });
+      const image = inputMode === 'photo' && selectedImage
+        ? readSelectedImage(inputMode, selectedImage, photoNote)
+        : emptyImagePayload;
+      const result = await refineNutritionItem({
+        operation: 'edit',
+        instruction,
+        item: items[index],
+        meal_description: estimationInput,
+        existing_item_names: items.map((item) => item.name),
+        image_base64: image.base64,
+        image_mime_type: image.mimeType,
+        image_width_px: image.widthPx,
+        image_height_px: image.heightPx,
+      });
+      const nextItems = replaceNutritionItemAt(items, index, normalizeItem(result.item));
+      setItemAiUndo(createItemAiUndoSnapshot());
+      setItems(nextItems);
+      setServings([...servings]);
+      setTotal(calculateTotal(nextItems, servings));
+      setPersistedSource('api_edited');
+      setStandaloneTotalActive(false);
+      setHasItemBreakdown(true);
+      setHasNutrition(true);
+      setItemAiPromptIndex(null);
+      setItemAiInstruction('');
+      setStatus(
+        result.fallback_notice
+          ? { message: `品目を修正しました。${result.fallback_notice}`, type: 'error' }
+          : { message: '品目を修正しました。', type: 'success' },
+      );
+    } catch (error) {
+      setStatus({ message: getErrorMessage(error), type: 'error' });
+    } finally {
+      await loadAiStatus();
+      setBusy(null);
+    }
+  }
+
+  async function handleAiAddItem(): Promise<void> {
+    const instruction = itemAiAddInstruction.trim();
+    if (!instruction) {
+      setStatus({ message: '追加する品目の内容を入力してください。', type: 'error' });
+      return;
+    }
+
+    try {
+      setBusy('item-ai');
+      setStatus({ message: '品目をAIで追加中です。' });
+      const image = inputMode === 'photo' && selectedImage
+        ? readSelectedImage(inputMode, selectedImage, photoNote)
+        : emptyImagePayload;
+      const result = await refineNutritionItem({
+        operation: 'add',
+        instruction,
+        meal_description: estimationInput,
+        existing_item_names: items.map((item) => item.name),
+        image_base64: image.base64,
+        image_mime_type: image.mimeType,
+        image_width_px: image.widthPx,
+        image_height_px: image.heightPx,
+      });
+      const nextItem = normalizeItem(result.item);
+      const nextItems = appendNutritionItem(items, nextItem);
+      const nextServings = estimateMode === 'api'
+        ? [...(servings.length ? servings : items.map(() => 1)), 1]
+        : servings;
+      const preserveStandaloneTotal = items.length === 0 && standaloneTotalActive;
+      setItemAiUndo(createItemAiUndoSnapshot());
+      setItems(nextItems);
+      setServings(nextServings);
+      if (!preserveStandaloneTotal) {
+        setTotal(calculateTotal(nextItems, nextServings));
+      }
+      setPersistedSource('api_edited');
+      setHasItemBreakdown(true);
+      setStandaloneTotalActive(preserveStandaloneTotal);
+      setStandaloneItemAdded(preserveStandaloneTotal);
+      setHasNutrition(true);
+      setItemAiAddPromptOpen(false);
+      setItemAiAddInstruction('');
+      setStatus(
+        result.fallback_notice
+          ? { message: `品目を追加しました。${result.fallback_notice}`, type: 'error' }
+          : { message: '品目を追加しました。', type: 'success' },
+      );
+    } catch (error) {
+      setStatus({ message: getErrorMessage(error), type: 'error' });
+    } finally {
+      await loadAiStatus();
+      setBusy(null);
+    }
   }
 
   function updateServing(index: number, delta: number): void {
@@ -735,6 +903,7 @@ export function App(): JSX.Element {
     setTotal(calculateTotal(items, nextServings));
     setStandaloneTotalActive(false);
     setHasNutrition(true);
+    setItemAiUndo(null);
   }
 
   function updateItemName(index: number, value: string): void {
@@ -744,6 +913,7 @@ export function App(): JSX.Element {
     setItems(nextItems);
     setTotal(calculateTotal(nextItems, servings));
     setHasNutrition(true);
+    setItemAiUndo(null);
   }
 
   function updateItemQuantity(index: number, value: string): void {
@@ -751,6 +921,7 @@ export function App(): JSX.Element {
       itemIndex === index ? { ...item, quantity_text: value } : item
     )));
     setHasNutrition(true);
+    setItemAiUndo(null);
   }
 
   function updateItemNutrition(index: number, key: NutritionKey, value: string): void {
@@ -761,6 +932,7 @@ export function App(): JSX.Element {
     setTotal(calculateTotal(nextItems, servings));
     setStandaloneTotalActive(false);
     setHasNutrition(true);
+    setItemAiUndo(null);
   }
 
   function removeItem(index: number): void {
@@ -778,6 +950,9 @@ export function App(): JSX.Element {
     }
     setStandaloneItemAdded(false);
     setHasNutrition(true);
+    setItemAiUndo(null);
+    setItemAiPromptIndex(null);
+    setItemAiInstruction('');
   }
 
   function addItem(): void {
@@ -793,6 +968,7 @@ export function App(): JSX.Element {
     setStandaloneItemAdded(preserveStandaloneTotal);
     if (!preserveStandaloneTotal) setTotal(calculateTotal(nextItems, nextServings));
     setHasNutrition(true);
+    setItemAiUndo(null);
   }
 
   async function loadRecentMeals(): Promise<boolean> {
@@ -1022,6 +1198,11 @@ export function App(): JSX.Element {
     setStandaloneTotalActive(nextItems.length === 0);
     setStandaloneItemAdded(false);
     setHasNutrition(true);
+    setItemAiPromptIndex(null);
+    setItemAiInstruction('');
+    setItemAiAddPromptOpen(false);
+    setItemAiAddInstruction('');
+    setItemAiUndo(null);
     draftPausedRef.current = true;
     setStatus({ message: '最近の記録を読み込みました。', type: 'success' });
     navigateTo('record');
@@ -1851,11 +2032,70 @@ export function App(): JSX.Element {
                 <span className="section-label">内訳</span>
                 <h2>品目ごとの調整</h2>
               </div>
-              <button className="action-button secondary-action item-add-button" type="button" onClick={addItem}>
-                <Plus size={18} />
-                品目を追加
-              </button>
+              <div className="item-breakdown-actions">
+                {estimateMode === 'api' && (
+                  <button
+                    className="action-button secondary-action item-ai-add-button"
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={() => {
+                      setItemAiAddPromptOpen((current) => !current);
+                      setItemAiPromptIndex(null);
+                    }}
+                  >
+                    <Sparkles size={18} />
+                    AIで品目を追加
+                  </button>
+                )}
+                <button className="action-button secondary-action item-add-button" type="button" disabled={busy !== null} onClick={addItem}>
+                  <Plus size={18} />
+                  品目を追加
+                </button>
+              </div>
             </div>
+            {estimateMode === 'api' && itemAiAddPromptOpen && (
+              <div className="item-ai-prompt item-ai-add-prompt">
+                <label className="field">
+                  <span>追加内容</span>
+                  <textarea
+                    value={itemAiAddInstruction}
+                    maxLength={500}
+                    placeholder="例: わかめの味噌汁1杯を追加"
+                    onChange={(event) => setItemAiAddInstruction(event.target.value)}
+                  />
+                </label>
+                <div className="item-ai-prompt-actions">
+                  <button
+                    className="action-button primary-action"
+                    type="button"
+                    disabled={busy !== null || !itemAiAddInstruction.trim()}
+                    onClick={() => void handleAiAddItem()}
+                  >
+                    {busy === 'item-ai' ? <Loader2 className="spin" size={18} /> : <Sparkles size={18} />}
+                    AIで追加
+                  </button>
+                  <button
+                    className="action-button secondary-action"
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={() => {
+                      setItemAiAddPromptOpen(false);
+                      setItemAiAddInstruction('');
+                    }}
+                  >
+                    閉じる
+                  </button>
+                </div>
+              </div>
+            )}
+            {itemAiUndo && (
+              <div className="item-ai-undo" role="status" aria-live="polite">
+                <span>直前のAI変更を元に戻せます。</span>
+                <button className="action-button secondary-action" type="button" disabled={busy !== null} onClick={handleUndoItemAi}>
+                  元に戻す
+                </button>
+              </div>
+            )}
             <ul className="item-list">
               {items.map((item, index) => {
                 const serving = servings[index] || 1;
@@ -1885,6 +2125,62 @@ export function App(): JSX.Element {
                         <p>{item.basis || '根拠なし'}</p>
                       </div>
                     </div>
+                    {estimateMode === 'api' && (
+                      <div className="item-ai-controls">
+                        <button
+                          className="action-button secondary-action"
+                          type="button"
+                          disabled={busy !== null}
+                          onClick={() => {
+                            if (itemAiPromptIndex === index) {
+                              setItemAiPromptIndex(null);
+                            } else {
+                              setItemAiPromptIndex(index);
+                            }
+                            setItemAiInstruction('');
+                            setItemAiAddPromptOpen(false);
+                          }}
+                        >
+                          <Sparkles size={18} />
+                          AIで修正
+                        </button>
+                        {itemAiPromptIndex === index && (
+                          <div className="item-ai-prompt">
+                            <label className="field">
+                              <span>訂正内容</span>
+                              <textarea
+                                value={itemAiInstruction}
+                                maxLength={500}
+                                placeholder="例: 鶏もも肉ではなく皮なし鶏むね肉120g"
+                                onChange={(event) => setItemAiInstruction(event.target.value)}
+                              />
+                            </label>
+                            <div className="item-ai-prompt-actions">
+                              <button
+                                className="action-button primary-action"
+                                type="button"
+                                disabled={busy !== null || !itemAiInstruction.trim()}
+                                onClick={() => void handleAiEditItem(index)}
+                              >
+                                {busy === 'item-ai' ? <Loader2 className="spin" size={18} /> : <Sparkles size={18} />}
+                                AIで修正
+                              </button>
+                              <button
+                                className="action-button secondary-action"
+                                type="button"
+                                disabled={busy !== null}
+                                onClick={() => {
+                                  setItemAiPromptIndex(null);
+                                  setItemAiInstruction('');
+                                }}
+                              >
+                                閉じる
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                     <div className="item-nutrition-grid">
                       {nutritionKeys.map(({ key, label, unit, step }) => (
                         <label className="item-nutrition-field" key={key}>

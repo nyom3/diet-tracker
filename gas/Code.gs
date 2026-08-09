@@ -70,6 +70,10 @@ const AI_CALL_LOG_MAX_DATA_ROWS = 2000;
 const MIN_VALID_WEIGHT_KG = 20;
 const MAX_VALID_WEIGHT_KG = 300;
 const MAX_AI_IMAGE_BYTES = Math.floor(1.5 * 1024 * 1024);
+const NUTRITION_ITEM_AI_MAX_INSTRUCTION_LENGTH = 500;
+const NUTRITION_ITEM_AI_MAX_MEAL_DESCRIPTION_LENGTH = 500;
+const NUTRITION_ITEM_AI_MAX_EXISTING_ITEMS = 50;
+const NUTRITION_ITEM_AI_MAX_ITEM_NAME_LENGTH = 120;
 
 function doGet() {
   return HtmlService.createHtmlOutputFromFile('index')
@@ -1058,6 +1062,162 @@ function estimateCalories(inputText, imageBase64, imageMimeType, imageWidthPx, i
   return result;
 }
 
+// 品目単位のAI修正・追加。ユーザー操作からのみ呼ばれ、画像はこの呼び出し中だけ利用する。
+function refineNutritionItem(request) {
+  const input = validateNutritionItemAiRequest(request);
+  const requestKind = input.operation === 'edit' ? 'item-edit' : 'item-add';
+  const prompt = buildNutritionItemAiPrompt(input);
+  const strippedImage = input.image ? stripDataUrlPrefix(input.image) : '';
+  const openAiAttempt = tryOpenAiItemRequest(
+    prompt,
+    strippedImage,
+    input.imageInfo ? input.imageInfo.mimeType : 'image/jpeg',
+    input.imageInfo ? input.imageInfo.widthPx : 0,
+    input.imageInfo ? input.imageInfo.heightPx : 0,
+    requestKind,
+  );
+
+  if (openAiAttempt.ok) {
+    return {
+      item: normalizeSingleNutritionItem(JSON.parse(extractJson(openAiAttempt.text))),
+    };
+  }
+
+  const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY が設定されていません。');
+  }
+
+  const parts = [{ text: prompt }];
+  if (strippedImage) {
+    parts.push({
+      inline_data: {
+        mime_type: input.imageInfo.mimeType,
+        data: strippedImage,
+      },
+    });
+  }
+
+  const geminiResponse = fetchGeminiWithFallback(apiKey, {
+    contents: [{ role: 'user', parts: parts }],
+    generationConfig: {
+      response_mime_type: 'application/json',
+      thinkingConfig: { thinkingLevel: 'low' },
+    },
+  }, requestKind);
+  const payload = JSON.parse(geminiResponse.body);
+  const allParts = (
+    payload.candidates &&
+    payload.candidates[0] &&
+    payload.candidates[0].content &&
+    payload.candidates[0].content.parts
+  ) || [];
+  const responsePart = allParts.filter(function (part) { return !part.thought && part.text; })[0];
+  if (!responsePart || !responsePart.text) {
+    throw new Error('Gemini API の応答が空です。');
+  }
+
+  return {
+    item: normalizeSingleNutritionItem(JSON.parse(extractJson(responsePart.text))),
+    fallback_notice: buildFallbackNotice(openAiAttempt.reason, geminiResponse.usedFallback ? GEMINI_FALLBACK_NOTICE : ''),
+  };
+}
+
+function validateNutritionItemAiRequest(data) {
+  if (!data || typeof data !== 'object') {
+    throw new Error('品目AIリクエストが不正です。');
+  }
+
+  const operation = String(data.operation || '').trim();
+  if (operation !== 'edit' && operation !== 'add') {
+    throw new Error('品目AIの操作種別が不正です。');
+  }
+
+  const instruction = String(data.instruction || '').trim();
+  if (!instruction || instruction.length > NUTRITION_ITEM_AI_MAX_INSTRUCTION_LENGTH) {
+    throw new Error('訂正指示は1〜' + NUTRITION_ITEM_AI_MAX_INSTRUCTION_LENGTH + '文字で入力してください。');
+  }
+
+  const mealDescription = String(data.meal_description || '').trim();
+  if (mealDescription.length > NUTRITION_ITEM_AI_MAX_MEAL_DESCRIPTION_LENGTH) {
+    throw new Error('食事の説明が長すぎます。');
+  }
+
+  const rawNames = data.existing_item_names;
+  if (!Array.isArray(rawNames) || rawNames.length > NUTRITION_ITEM_AI_MAX_EXISTING_ITEMS) {
+    throw new Error('既存品目の件数が不正です。');
+  }
+  const existingItemNames = rawNames.map(function (name) {
+    const normalized = String(name || '').trim();
+    if (normalized.length > NUTRITION_ITEM_AI_MAX_ITEM_NAME_LENGTH) {
+      throw new Error('品目名が長すぎます。');
+    }
+    return normalized;
+  });
+
+  let item = null;
+  if (operation === 'edit') {
+    if (!data.item || typeof data.item !== 'object') {
+      throw new Error('修正対象の品目が必要です。');
+    }
+    item = normalizeNutritionItem(data.item);
+    if (item.name.length > NUTRITION_ITEM_AI_MAX_ITEM_NAME_LENGTH) {
+      throw new Error('品目名が長すぎます。');
+    }
+  }
+
+  const image = String(data.image_base64 || '').trim();
+  const imageInfo = image ? getTrustedImageInfo(image) : null;
+  if (image && !imageInfo) {
+    throw new Error('JPEGまたはPNG形式の画像を選択してください。');
+  }
+
+  return {
+    operation: operation,
+    instruction: instruction,
+    item: item,
+    mealDescription: mealDescription,
+    existingItemNames: existingItemNames,
+    image: image,
+    imageInfo: imageInfo,
+  };
+}
+
+function buildNutritionItemAiPrompt(input) {
+  const schema = '{"item":{"name":"品名","quantity_text":"分量","basis":"根拠（40文字以内）","calories_kcal":数値,"protein_g":数値,"fat_g":数値,"carbs_g":数値}}';
+  const target = input.operation === 'edit'
+    ? '修正対象の現在の品目: ' + JSON.stringify(input.item)
+    : '追加する品目は既存品目を変更せず、新しい1品だけ作成してください。';
+  const existing = input.existingItemNames.length > 0
+    ? JSON.stringify(input.existingItemNames)
+    : '[]';
+  return 'あなたは栄養士です。食事内の1品だけを推定・修正してください。\n' +
+    '操作: ' + input.operation + '\n' +
+    target + '\n' +
+    '訂正・追加指示: ' + input.instruction + '\n' +
+    '食事全体の説明: ' + (input.mealDescription || 'なし') + '\n' +
+    '既存品目名（追加時はこれらを変更・削除しない）: ' + existing + '\n' +
+    '画像がある場合は、対象品目の判断にだけ使ってください。\n' +
+    '必ず1品だけをitemに入れ、items配列や複数品目は返さないでください。数値フィールドは半角数字の0以上、basisは40文字以内にしてください。JSONのみで回答してください。\n' +
+    schema;
+}
+
+function normalizeSingleNutritionItem(result) {
+  if (!result || typeof result !== 'object') {
+    throw new Error('品目AIの応答JSONが不正です。');
+  }
+  if (Array.isArray(result.items)) {
+    if (result.items.length !== 1) {
+      throw new Error('品目AIの応答が複数品目でした。');
+    }
+    return normalizeNutritionItem(result.items[0]);
+  }
+  if (!result.item || typeof result.item !== 'object') {
+    throw new Error('品目AIの応答にitemがありません。');
+  }
+  return normalizeNutritionItem(result.item);
+}
+
 function callGeminiText(prompt, thinkingLevel) {
   const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
 
@@ -1556,7 +1716,11 @@ function readFoodLogsFromSheet(sheet, options) {
   }
 
   const config = options || {};
-  const now = config.now instanceof Date ? config.now : new Date();
+  // NodeのVM境界など別realmのDateも受け付け、テスト・呼び出し側の基準時刻を失わない。
+  const configuredNow = config.now;
+  const now = configuredNow && typeof configuredNow.getTime === 'function'
+    ? new Date(configuredNow.getTime())
+    : new Date();
   const timezone = config.timezone || Session.getScriptTimeZone();
   const today = Utilities.formatDate(now, timezone, 'yyyy-MM-dd');
   const recentMealLimit = Math.max(0, Math.floor(Number(config.recentMealLimit) || 0));

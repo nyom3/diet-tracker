@@ -49,6 +49,25 @@ export type NutritionResult = {
   fallback_notice?: string;
 } & Partial<NutritionTotal>;
 
+export type NutritionItemAiOperation = 'edit' | 'add';
+
+export type RefineNutritionItemRequest = {
+  operation: NutritionItemAiOperation;
+  instruction: string;
+  item?: NutritionItem | null;
+  meal_description: string;
+  existing_item_names: string[];
+  image_base64: string;
+  image_mime_type: string;
+  image_width_px: number;
+  image_height_px: number;
+};
+
+export type RefineNutritionItemResult = {
+  item: NutritionItem;
+  fallback_notice?: string;
+};
+
 export type SaveMealPayload = {
   timestamp: string;
   meal_type: MealType;

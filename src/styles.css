@@ -1818,7 +1818,67 @@ h2 {
 }
 
 .item-add-button,
-.item-remove-button {
+.item-remove-button,
+.item-ai-add-button {
+  min-height: 44px;
+}
+
+.item-breakdown-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.item-breakdown-actions .action-button {
+  width: auto;
+}
+
+.item-ai-controls {
+  display: grid;
+  gap: 8px;
+}
+
+.item-ai-controls > .action-button {
+  width: 100%;
+}
+
+.item-ai-prompt {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  padding: 10px;
+}
+
+.item-ai-prompt textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
+.item-ai-prompt-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.item-ai-undo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  padding: 8px 10px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.item-ai-undo .action-button {
+  width: auto;
   min-height: 44px;
 }
 

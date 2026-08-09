@@ -18,6 +18,8 @@ import type {
   HomeSnapshot,
   MealType,
   NutritionResult,
+  RefineNutritionItemRequest,
+  RefineNutritionItemResult,
   NutritionTargets,
   SavedMeal,
   SaveGoalsPayload,
@@ -49,6 +51,7 @@ type GoogleScriptRun = {
     imageWidthPx: number,
     imageHeightPx: number,
   ) => void;
+  refineNutritionItem: (request: RefineNutritionItemRequest) => void;
   processInput: (payload: SaveMealPayload) => void;
   deleteMeal: (id: string) => void;
   listRecentMeals: (limit: number) => void;
@@ -85,6 +88,12 @@ export function estimateCalories(
 ): Promise<NutritionResult> {
   return callGas<NutritionResult>((runner) => {
     runner.estimateCalories(description, imageBase64, imageMimeType, imageWidthPx, imageHeightPx);
+  });
+}
+
+export function refineNutritionItem(request: RefineNutritionItemRequest): Promise<RefineNutritionItemResult> {
+  return callGas<RefineNutritionItemResult>((runner) => {
+    runner.refineNutritionItem(request);
   });
 }
 
