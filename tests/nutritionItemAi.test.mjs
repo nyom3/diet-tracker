@@ -34,8 +34,11 @@ vm.runInNewContext([
   'const NUTRITION_ITEM_AI_MAX_MEAL_DESCRIPTION_LENGTH = 500;',
   'const NUTRITION_ITEM_AI_MAX_EXISTING_ITEMS = 50;',
   'const NUTRITION_ITEM_AI_MAX_ITEM_NAME_LENGTH = 120;',
-  'function getTrustedImageInfo() { return null; }',
+  'const MAX_AI_IMAGE_COUNT = 3;',
+  'function stripDataUrlPrefix(value) { return String(value || "").replace(/^data:[^;]+;base64,/, ""); }',
+  'function getTrustedImageInfo(image) { return image ? { mimeType: "image/jpeg", widthPx: 10, heightPx: 20 } : null; }',
   extractFunction(gasSource, 'validateNutritionItemAiRequest'),
+  extractFunction(gasSource, 'normalizeTrustedImages'),
   extractFunction(gasSource, 'normalizeSingleNutritionItem'),
   extractFunction(gasSource, 'normalizeNutritionItem'),
   extractFunction(gasSource, 'toNonNegativeNumber'),
@@ -78,7 +81,7 @@ test('GAS境界は操作種別・指示長・品目数・PFC非負値を検証�
     item,
     meal_description: '定食',
     existing_item_names: ['鶏もも肉', 'ご飯'],
-    image_base64: '',
+    images: [],
   };
   const valid = gasContext.validateNutritionItemAiRequest(request);
   assert.equal(valid.operation, 'edit');
@@ -112,5 +115,27 @@ test('GAS境界はAIの複数品目応答を拒否する', () => {
   assert.deepEqual(
     JSON.parse(JSON.stringify(gasContext.normalizeSingleNutritionItem({ item }))),
     item,
+  );
+});
+
+test('GAS境界は画像を全件検証し、最大3枚を超える配列を拒否する', () => {
+  const images = gasContext.normalizeTrustedImages([
+    { base64: 'first' },
+    { base64: 'second' },
+    { base64: 'third' },
+  ]);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(images)), [
+    { base64: 'first', mimeType: 'image/jpeg', widthPx: 10, heightPx: 20 },
+    { base64: 'second', mimeType: 'image/jpeg', widthPx: 10, heightPx: 20 },
+    { base64: 'third', mimeType: 'image/jpeg', widthPx: 10, heightPx: 20 },
+  ]);
+  assert.throws(
+    () => gasContext.normalizeTrustedImages(Array.from({ length: 4 }, () => ({ base64: 'image' }))),
+    /最大3枚/,
+  );
+  assert.throws(
+    () => gasContext.normalizeTrustedImages([{ base64: '' }, { base64: 'valid' }]),
+    /JPEGまたはPNG/,
   );
 });

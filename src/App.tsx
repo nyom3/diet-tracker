@@ -41,7 +41,7 @@ import {
   summarizeTodayFeedback,
   updateMeal,
 } from './gasClient';
-import { emptyImagePayload, prepareSelectedImage, readSelectedImage, type PreparedImage } from './imageProcessing';
+import { MAX_MEAL_IMAGES, prepareSelectedImage, readSelectedImages, type PreparedImage } from './imageProcessing';
 import type {
   AiProviderMode,
   AiStatus,
@@ -275,7 +275,7 @@ export function App(): JSX.Element {
   const [inputMode, setInputMode] = React.useState<InputMode>('photo');
   const [estimateMode, setEstimateMode] = React.useState<EstimateMode>('api');
   const [datetime, setDatetime] = React.useState(() => createLocalDatetimeValue());
-  const [selectedImage, setSelectedImage] = React.useState<PreparedImage | null>(null);
+  const [selectedImages, setSelectedImages] = React.useState<PreparedImage[]>([]);
   const [photoStatus, setPhotoStatus] = React.useState<PhotoStatus>('idle');
   const [photoError, setPhotoError] = React.useState('');
   const [photoNote, setPhotoNote] = React.useState('');
@@ -333,6 +333,7 @@ export function App(): JSX.Element {
   const settingsButtonRef = React.useRef<HTMLButtonElement | null>(null);
   const hasMountedViewRef = React.useRef(false);
   const photoInputRef = React.useRef<HTMLInputElement | null>(null);
+  const selectedImagesRef = React.useRef<PreparedImage[]>([]);
   const photoRequestIdRef = React.useRef(0);
   const dashboardRequestIdRef = React.useRef(0);
   const homeSnapshotRequestIdRef = React.useRef(0);
@@ -362,7 +363,7 @@ export function App(): JSX.Element {
     !busy &&
     getSaveBlockedReason({
       inputMode,
-      hasPhoto: selectedImage !== null,
+      hasPhoto: selectedImages.length > 0,
       estimationInput,
       estimateMode,
       hasNutrition,
@@ -374,7 +375,7 @@ export function App(): JSX.Element {
   const saveBlockedReason = busy === null
     ? getSaveBlockedReason({
       inputMode,
-      hasPhoto: selectedImage !== null,
+      hasPhoto: selectedImages.length > 0,
       estimationInput,
       estimateMode,
       hasNutrition,
@@ -385,15 +386,13 @@ export function App(): JSX.Element {
     })
     : null;
 
-  React.useEffect(() => {
-    if (!selectedImage) {
-      return undefined;
-    }
+  selectedImagesRef.current = selectedImages;
 
+  React.useEffect(() => {
     return () => {
-      URL.revokeObjectURL(selectedImage.previewUrl);
+      selectedImagesRef.current.forEach((image) => URL.revokeObjectURL(image.previewUrl));
     };
-  }, [selectedImage]);
+  }, []);
 
   React.useEffect(() => {
     if (currentView === 'trend') {
@@ -488,14 +487,28 @@ export function App(): JSX.Element {
     draftPausedRef.current = false;
   }
 
+  function replaceSelectedImages(nextImages: PreparedImage[]): void {
+    const nextSet = new Set(nextImages);
+    selectedImagesRef.current
+      .filter((image) => !nextSet.has(image))
+      .forEach((image) => URL.revokeObjectURL(image.previewUrl));
+    selectedImagesRef.current = nextImages;
+    setSelectedImages(nextImages);
+  }
+
   async function preparePhoto(file: File | null): Promise<void> {
     const requestId = photoRequestIdRef.current + 1;
     photoRequestIdRef.current = requestId;
-    setSelectedImage(null);
     setPhotoError('');
 
     if (!file) {
-      setPhotoStatus('idle');
+      setPhotoStatus(selectedImagesRef.current.length > 0 ? 'ready' : 'idle');
+      return;
+    }
+
+    if (selectedImagesRef.current.length >= MAX_MEAL_IMAGES) {
+      setPhotoStatus('error');
+      setPhotoError(`写真は${MAX_MEAL_IMAGES}枚まで追加できます。`);
       return;
     }
 
@@ -508,7 +521,14 @@ export function App(): JSX.Element {
         return;
       }
 
-      setSelectedImage(preparedImage);
+      if (selectedImagesRef.current.length >= MAX_MEAL_IMAGES) {
+        URL.revokeObjectURL(preparedImage.previewUrl);
+        setPhotoStatus('error');
+        setPhotoError(`写真は${MAX_MEAL_IMAGES}枚まで追加できます。`);
+        return;
+      }
+
+      replaceSelectedImages([...selectedImagesRef.current, preparedImage]);
       setPhotoStatus('ready');
       if (photoInputRef.current) {
         photoInputRef.current.value = '';
@@ -539,14 +559,20 @@ export function App(): JSX.Element {
     void preparePhoto(file);
   }
 
-  function openPhotoPicker(): void {
-    photoInputRef.current?.click();
+  function clearPreparedPhotos(): void {
+    photoRequestIdRef.current += 1;
+    replaceSelectedImages([]);
+    setPhotoStatus('idle');
+    setPhotoError('');
+    if (photoInputRef.current) {
+      photoInputRef.current.value = '';
+    }
   }
 
-  function clearPreparedPhoto(): void {
+  function removePreparedPhoto(index: number): void {
     photoRequestIdRef.current += 1;
-    setSelectedImage(null);
-    setPhotoStatus('idle');
+    replaceSelectedImages(selectedImagesRef.current.filter((_, imageIndex) => imageIndex !== index));
+    setPhotoStatus(selectedImagesRef.current.length > 0 ? 'ready' : 'idle');
     setPhotoError('');
     if (photoInputRef.current) {
       photoInputRef.current.value = '';
@@ -650,8 +676,8 @@ export function App(): JSX.Element {
     try {
       setBusy('estimate');
       setStatus({ message: '推定中です。' });
-      const image = readSelectedImage(inputMode, selectedImage, photoNote);
-      const result = await estimateCalories(estimationInput, image.base64, image.mimeType, image.widthPx, image.heightPx);
+      const images = readSelectedImages(inputMode, selectedImages, photoNote);
+      const result = await estimateCalories(estimationInput, images);
       applyNutrition(result, true);
       setStatus(
         result.fallback_notice
@@ -734,7 +760,7 @@ export function App(): JSX.Element {
     setInputMode('photo');
     setEstimateMode('api');
     setDatetime(createLocalDatetimeValue());
-    clearPreparedPhoto();
+    clearPreparedPhotos();
     setPhotoNote('');
     setMealText('');
     setDisplayName('');
@@ -803,19 +829,16 @@ export function App(): JSX.Element {
     try {
       setBusy('item-ai');
       setStatus({ message: '品目をAIで修正中です。' });
-      const image = inputMode === 'photo' && selectedImage
-        ? readSelectedImage(inputMode, selectedImage, photoNote)
-        : emptyImagePayload;
+      const images = inputMode === 'photo' && selectedImages.length > 0
+        ? readSelectedImages(inputMode, selectedImages, photoNote)
+        : [];
       const result = await refineNutritionItem({
         operation: 'edit',
         instruction,
         item: items[index],
         meal_description: estimationInput,
         existing_item_names: items.map((item) => item.name),
-        image_base64: image.base64,
-        image_mime_type: image.mimeType,
-        image_width_px: image.widthPx,
-        image_height_px: image.heightPx,
+        images,
       });
       const nextItems = replaceNutritionItemAt(items, index, normalizeItem(result.item));
       setItemAiUndo(createItemAiUndoSnapshot());
@@ -851,18 +874,15 @@ export function App(): JSX.Element {
     try {
       setBusy('item-ai');
       setStatus({ message: '品目をAIで追加中です。' });
-      const image = inputMode === 'photo' && selectedImage
-        ? readSelectedImage(inputMode, selectedImage, photoNote)
-        : emptyImagePayload;
+      const images = inputMode === 'photo' && selectedImages.length > 0
+        ? readSelectedImages(inputMode, selectedImages, photoNote)
+        : [];
       const result = await refineNutritionItem({
         operation: 'add',
         instruction,
         meal_description: estimationInput,
         existing_item_names: items.map((item) => item.name),
-        image_base64: image.base64,
-        image_mime_type: image.mimeType,
-        image_width_px: image.widthPx,
-        image_height_px: image.heightPx,
+        images,
       });
       const nextItem = normalizeItem(result.item);
       const nextItems = appendNutritionItem(items, nextItem);
@@ -1178,7 +1198,7 @@ export function App(): JSX.Element {
     setInputMode('text');
     setEstimateMode(meal.source === 'manual' ? 'manual' : 'api');
     setDatetime(createLocalDatetimeValue(new Date(meal.timestamp)));
-    clearPreparedPhoto();
+    clearPreparedPhotos();
     setPhotoNote('');
     setMealText(meal.description);
     setDisplayName(meal.description);
@@ -1824,39 +1844,55 @@ export function App(): JSX.Element {
           {inputMode === 'photo' ? (
             <div className="photo-grid">
               <div className="photo-picker">
-                <label className={`photo-drop ${selectedImage ? 'has-preview' : ''}`}>
-                  {selectedImage ? (
-                    <img src={selectedImage.previewUrl} alt="選択した食事" />
-                  ) : photoStatus === 'processing' ? (
-                    <span>
-                      <Loader2 className="spin" size={24} />
-                      画像を準備中
-                    </span>
-                  ) : (
-                    <span>
-                      <Camera size={24} />
-                      写真を選択
-                    </span>
+                <div className="photo-thumbnails" aria-label={`選択した写真 ${selectedImages.length}/${MAX_MEAL_IMAGES}枚`}>
+                  {selectedImages.map((image, index) => (
+                    <div className="photo-thumbnail" key={image.previewUrl}>
+                      <img src={image.previewUrl} alt={`選択した食事写真${index + 1}`} />
+                      <button
+                        className="photo-thumbnail-remove"
+                        type="button"
+                        aria-label={`写真${index + 1}を削除`}
+                        disabled={busy !== null || photoStatus === 'processing'}
+                        onClick={() => removePreparedPhoto(index)}
+                      >
+                        <X size={18} />
+                      </button>
+                    </div>
+                  ))}
+                  {selectedImages.length < MAX_MEAL_IMAGES && (
+                    <label className="photo-drop photo-add-tile">
+                      {photoStatus === 'processing' ? (
+                        <span>
+                          <Loader2 className="spin" size={24} />
+                          画像を準備中
+                        </span>
+                      ) : (
+                        <span>
+                          {selectedImages.length > 0 ? <Plus size={24} /> : <Camera size={24} />}
+                          {selectedImages.length > 0 ? '+追加' : '写真を選択'}
+                        </span>
+                      )}
+                      <input
+                        ref={photoInputRef}
+                        type="file"
+                        accept="image/jpeg,image/png"
+                        disabled={busy !== null || photoStatus === 'processing'}
+                        onChange={(event) => handlePhotoSelection(event.target.files?.[0] || null)}
+                      />
+                    </label>
                   )}
-                  <input
-                    ref={photoInputRef}
-                    type="file"
-                    accept="image/jpeg,image/png"
-                    onChange={(event) => handlePhotoSelection(event.target.files?.[0] || null)}
-                  />
-                </label>
-                <small className="field-hint">JPEG/PNGのみ。送信前に長辺を縮小し、圧縮してから推定します。</small>
-                {selectedImage && (
-                  <div className="photo-actions">
-                    <button className="action-button secondary-action" type="button" onClick={openPhotoPicker}>
-                      <Camera size={18} />
-                      撮り直す
-                    </button>
-                    <button className="action-button secondary-action" type="button" onClick={clearPreparedPhoto}>
-                      <Trash2 size={18} />
-                      写真を外す
-                    </button>
-                  </div>
+                </div>
+                <small className="field-hint">JPEG/PNGのみ。最大{MAX_MEAL_IMAGES}枚。送信前に長辺を縮小し、圧縮してから推定します。</small>
+                {selectedImages.length > 0 && (
+                  <button
+                    className="action-button secondary-action"
+                    type="button"
+                    disabled={busy !== null || photoStatus === 'processing'}
+                    onClick={clearPreparedPhotos}
+                  >
+                    <Trash2 size={18} />
+                    写真をすべて外す
+                  </button>
                 )}
                 {busy === 'estimate' && (
                   <div className="photo-estimating" role="status" aria-live="polite">

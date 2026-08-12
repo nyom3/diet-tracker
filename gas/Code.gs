@@ -70,6 +70,9 @@ const AI_CALL_LOG_MAX_DATA_ROWS = 2000;
 const MIN_VALID_WEIGHT_KG = 20;
 const MAX_VALID_WEIGHT_KG = 300;
 const MAX_AI_IMAGE_BYTES = Math.floor(1.5 * 1024 * 1024);
+// フロントの上限(MAX_MEAL_IMAGES=3)に対応するサーバー側の防御的な上限。
+// クライアントを迂回した巨大な画像配列を受け付けない。
+const MAX_AI_IMAGE_COUNT = 3;
 const NUTRITION_ITEM_AI_MAX_INSTRUCTION_LENGTH = 500;
 const NUTRITION_ITEM_AI_MAX_MEAL_DESCRIPTION_LENGTH = 500;
 const NUTRITION_ITEM_AI_MAX_EXISTING_ITEMS = 50;
@@ -974,18 +977,11 @@ function summarizeTodayFeedback() {
   };
 }
 
-function estimateCalories(inputText, imageBase64, imageMimeType, imageWidthPx, imageHeightPx) {
+function estimateCalories(inputText, images) {
   const text = String(inputText || '').trim();
-  const image = String(imageBase64 || '').trim();
-  const imageInfo = image ? getTrustedImageInfo(image) : null;
-  if (image && !imageInfo) {
-    throw new Error('JPEGまたはPNG形式の画像を選択してください。');
-  }
-  const mimeType = imageInfo ? imageInfo.mimeType : 'image/jpeg';
-  const widthPx = imageInfo ? imageInfo.widthPx : 0;
-  const heightPx = imageInfo ? imageInfo.heightPx : 0;
+  const trustedImages = normalizeTrustedImages(images);
 
-  if (!text && !image) {
+  if (!text && trustedImages.length === 0) {
     throw new Error('食事の説明または画像を入力してください。');
   }
 
@@ -999,8 +995,7 @@ function estimateCalories(inputText, imageBase64, imageMimeType, imageWidthPx, i
     '"total":{"calories_kcal":数値,"protein_g":数値,"fat_g":数値,"carbs_g":数値}}\n\n' +
     (text ? '食事: ' + text : '画像の食事を推定してください。');
 
-  const strippedImage = image ? stripDataUrlPrefix(image) : '';
-  const openAiAttempt = tryOpenAiVisionEstimate(prompt, strippedImage, mimeType, widthPx, heightPx);
+  const openAiAttempt = tryOpenAiVisionEstimate(prompt, trustedImages);
 
   if (openAiAttempt.ok) {
     return normalizeNutritionResult(JSON.parse(extractJson(openAiAttempt.text)), text || '画像の食事');
@@ -1014,14 +1009,14 @@ function estimateCalories(inputText, imageBase64, imageMimeType, imageWidthPx, i
 
   const parts = [{ text: prompt }];
 
-  if (image) {
+  trustedImages.forEach(function (image) {
     parts.push({
       inline_data: {
-        mime_type: mimeType,
-        data: strippedImage,
+        mime_type: image.mimeType,
+        data: image.base64,
       },
     });
-  }
+  });
 
   const geminiResponse = fetchGeminiWithFallback(apiKey, {
     contents: [
@@ -1036,7 +1031,7 @@ function estimateCalories(inputText, imageBase64, imageMimeType, imageWidthPx, i
         thinkingLevel: 'low',
       },
     },
-  }, image ? 'vision' : 'text-estimate');
+  }, trustedImages.length > 0 ? 'vision' : 'text-estimate');
 
   const payload = JSON.parse(geminiResponse.body);
   const allParts = (
@@ -1067,13 +1062,9 @@ function refineNutritionItem(request) {
   const input = validateNutritionItemAiRequest(request);
   const requestKind = input.operation === 'edit' ? 'item-edit' : 'item-add';
   const prompt = buildNutritionItemAiPrompt(input);
-  const strippedImage = input.image ? stripDataUrlPrefix(input.image) : '';
   const openAiAttempt = tryOpenAiItemRequest(
     prompt,
-    strippedImage,
-    input.imageInfo ? input.imageInfo.mimeType : 'image/jpeg',
-    input.imageInfo ? input.imageInfo.widthPx : 0,
-    input.imageInfo ? input.imageInfo.heightPx : 0,
+    input.images,
     requestKind,
   );
 
@@ -1089,14 +1080,14 @@ function refineNutritionItem(request) {
   }
 
   const parts = [{ text: prompt }];
-  if (strippedImage) {
+  input.images.forEach(function (image) {
     parts.push({
       inline_data: {
-        mime_type: input.imageInfo.mimeType,
-        data: strippedImage,
+        mime_type: image.mimeType,
+        data: image.base64,
       },
     });
-  }
+  });
 
   const geminiResponse = fetchGeminiWithFallback(apiKey, {
     contents: [{ role: 'user', parts: parts }],
@@ -1166,11 +1157,7 @@ function validateNutritionItemAiRequest(data) {
     }
   }
 
-  const image = String(data.image_base64 || '').trim();
-  const imageInfo = image ? getTrustedImageInfo(image) : null;
-  if (image && !imageInfo) {
-    throw new Error('JPEGまたはPNG形式の画像を選択してください。');
-  }
+  const images = normalizeTrustedImages(data.images);
 
   return {
     operation: operation,
@@ -1178,8 +1165,7 @@ function validateNutritionItemAiRequest(data) {
     item: item,
     mealDescription: mealDescription,
     existingItemNames: existingItemNames,
-    image: image,
-    imageInfo: imageInfo,
+    images: images,
   };
 }
 
@@ -2256,4 +2242,27 @@ function getTrustedImageInfo(imageBase64) {
   } catch (error) {
     return null;
   }
+}
+
+function normalizeTrustedImages(images) {
+  if (!Array.isArray(images)) {
+    throw new Error('画像データが不正です。');
+  }
+  if (images.length > MAX_AI_IMAGE_COUNT) {
+    throw new Error('画像は最大' + MAX_AI_IMAGE_COUNT + '枚まで選択できます。');
+  }
+
+  return images.map(function (rawImage) {
+    const image = String(rawImage && rawImage.base64 || '').trim();
+    const imageInfo = image ? getTrustedImageInfo(image) : null;
+    if (!imageInfo) {
+      throw new Error('JPEGまたはPNG形式の画像を選択してください。');
+    }
+    return {
+      base64: stripDataUrlPrefix(image).replace(/\s/g, ''),
+      mimeType: imageInfo.mimeType,
+      widthPx: imageInfo.widthPx,
+      heightPx: imageInfo.heightPx,
+    };
+  });
 }

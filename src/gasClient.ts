@@ -29,6 +29,7 @@ import type {
   WeeklyReview,
   WeeklyTrend,
   WeeklyTrendDay,
+  ImagePayload,
 } from './types';
 
 declare global {
@@ -46,10 +47,7 @@ type GoogleScriptRun = {
   withFailureHandler: (handler: (error: Error) => void) => GoogleScriptRun;
   estimateCalories: (
     description: string,
-    imageBase64: string,
-    imageMimeType: string,
-    imageWidthPx: number,
-    imageHeightPx: number,
+    images: ImagePayload[],
   ) => void;
   refineNutritionItem: (request: RefineNutritionItemRequest) => void;
   processInput: (payload: SaveMealPayload) => void;
@@ -81,13 +79,10 @@ type GoogleScriptRun = {
 
 export function estimateCalories(
   description: string,
-  imageBase64: string,
-  imageMimeType: string,
-  imageWidthPx: number,
-  imageHeightPx: number,
+  images: ImagePayload[],
 ): Promise<NutritionResult> {
   return callGas<NutritionResult>((runner) => {
-    runner.estimateCalories(description, imageBase64, imageMimeType, imageWidthPx, imageHeightPx);
+    runner.estimateCalories(description, images);
   });
 }
 
