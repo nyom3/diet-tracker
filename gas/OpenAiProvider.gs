@@ -101,24 +101,27 @@ function getAiStatus() {
 
 // 食事推定。OpenAIが使えればOpenAIの応答テキストを、使えなければ{ok:false}を返す。
 // 呼び出し側(estimateCalories)はok:falseのとき既存のGemini経路をそのまま使う。
-function tryOpenAiVisionEstimate(promptText, strippedImageBase64, imageMimeType, widthPx, heightPx) {
-  var hasImage = !!strippedImageBase64;
+function tryOpenAiVisionEstimate(promptText, images) {
+  var imageList = Array.isArray(images) ? images : [];
+  var hasImage = imageList.length > 0;
 
   var reservationTokens = openAiCalculateReservation({
     promptText: promptText,
     maxOutputTokens: OPENAI_VISION_MAX_COMPLETION_TOKENS,
-    imageReservationTokens: hasImage ? OPENAI_VISION_IMAGE_RESERVATION_TOKENS : 0,
+    imageReservationTokens: imageList.length * OPENAI_VISION_IMAGE_RESERVATION_TOKENS,
   });
 
   var content = [{ type: 'text', text: promptText }];
   if (hasImage) {
     // detailは指定しない。GPT-5.6ではoriginal相当となり、クライアント側で
     // 長辺1536px以下・JPEG最大1.5MBにした画像をそのまま実測する。
-    content.push({
-      type: 'image_url',
-      image_url: {
-        url: 'data:' + imageMimeType + ';base64,' + strippedImageBase64,
-      },
+    imageList.forEach(function (image) {
+      content.push({
+        type: 'image_url',
+        image_url: {
+          url: 'data:' + image.mimeType + ';base64,' + image.base64,
+        },
+      });
     });
   }
 
@@ -136,21 +139,24 @@ function tryOpenAiVisionEstimate(promptText, strippedImageBase64, imageMimeType,
 }
 
 // 品目単位の修正・追加。食事全体推定とはrequest_kindを分け、同じ予算ゲートを通す。
-function tryOpenAiItemRequest(promptText, strippedImageBase64, imageMimeType, widthPx, heightPx, requestKind) {
-  var hasImage = !!strippedImageBase64;
+function tryOpenAiItemRequest(promptText, images, requestKind) {
+  var imageList = Array.isArray(images) ? images : [];
+  var hasImage = imageList.length > 0;
   var reservationTokens = openAiCalculateReservation({
     promptText: promptText,
     maxOutputTokens: OPENAI_TEXT_MAX_COMPLETION_TOKENS,
-    imageReservationTokens: hasImage ? OPENAI_VISION_IMAGE_RESERVATION_TOKENS : 0,
+    imageReservationTokens: imageList.length * OPENAI_VISION_IMAGE_RESERVATION_TOKENS,
   });
 
   var content = [{ type: 'text', text: promptText }];
   if (hasImage) {
-    content.push({
-      type: 'image_url',
-      image_url: {
-        url: 'data:' + imageMimeType + ';base64,' + strippedImageBase64,
-      },
+    imageList.forEach(function (image) {
+      content.push({
+        type: 'image_url',
+        image_url: {
+          url: 'data:' + image.mimeType + ';base64,' + image.base64,
+        },
+      });
     });
   }
 

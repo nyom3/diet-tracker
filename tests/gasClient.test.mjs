@@ -10,6 +10,38 @@ const transpiled = ts.transpileModule(source, {
 const moduleUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(transpiled)}`;
 const gasClient = await import(moduleUrl);
 
+test('estimateCaloriesは画像配列をそのままGASへ1回のRPCで渡す', async () => {
+  const previousWindow = globalThis.window;
+  let requested;
+  let successHandler;
+  const runner = {
+    withSuccessHandler(handler) {
+      successHandler = handler;
+      return this;
+    },
+    withFailureHandler() {
+      return this;
+    },
+    estimateCalories(description, images) {
+      requested = { description, images };
+      successHandler({ total: { calories_kcal: 600, protein_g: 30, fat_g: 20, carbs_g: 50 } });
+    },
+  };
+
+  globalThis.window = { google: { script: { run: runner } } };
+  try {
+    const images = [
+      { base64: 'first', mimeType: 'image/jpeg', widthPx: 100, heightPx: 80 },
+      { base64: 'second', mimeType: 'image/jpeg', widthPx: 120, heightPx: 90 },
+    ];
+    const result = await gasClient.estimateCalories('昼食', images);
+    assert.deepEqual(requested, { description: '昼食', images });
+    assert.equal(result.total.calories_kcal, 600);
+  } finally {
+    globalThis.window = previousWindow;
+  }
+});
+
 test('DashboardData境界は欠落日・null drop・型不正を安全側へ正規化する', () => {
   const result = gasClient.normalizeDashboardData({
     range_days: 30,

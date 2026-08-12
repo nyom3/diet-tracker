@@ -5,6 +5,7 @@ import { withImageDecodeRetry } from './imageRetry';
 export const emptyImagePayload: ImagePayload = { base64: '', mimeType: '', widthPx: 0, heightPx: 0 };
 export const imageDecodeErrorMessage =
   '画像を読み込めませんでした。もう一度お試しください。';
+export const MAX_MEAL_IMAGES = 3;
 
 const maxImageDimensionPx = 1536;
 const imageJpegQuality = 0.82;
@@ -25,25 +26,28 @@ type RenderedImage = {
   blob: Blob;
 };
 
-export function readSelectedImage(
+export function readSelectedImages(
   inputMode: InputMode,
-  preparedImage: PreparedImage | null,
+  preparedImages: PreparedImage[],
   note: string,
-): ImagePayload {
+): ImagePayload[] {
   if (inputMode !== 'photo') {
-    return emptyImagePayload;
+    return [];
   }
 
-  if (!preparedImage) {
+  if (preparedImages.length > MAX_MEAL_IMAGES) {
+    throw new Error(`写真は${MAX_MEAL_IMAGES}枚まで選択できます。`);
+  }
+
+  if (preparedImages.length === 0) {
     if (!note.trim()) {
       throw new Error('写真またはメモを入力してください。');
     }
 
-    return emptyImagePayload;
+    return [];
   }
 
-  const { previewUrl: _previewUrl, ...payload } = preparedImage;
-  return payload;
+  return preparedImages.map(({ previewUrl: _previewUrl, ...payload }) => payload);
 }
 
 export async function prepareSelectedImage(file: File): Promise<PreparedImage> {

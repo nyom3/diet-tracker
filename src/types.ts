@@ -57,10 +57,7 @@ export type RefineNutritionItemRequest = {
   item?: NutritionItem | null;
   meal_description: string;
   existing_item_names: string[];
-  image_base64: string;
-  image_mime_type: string;
-  image_width_px: number;
-  image_height_px: number;
+  images: ImagePayload[];
 };
 
 export type RefineNutritionItemResult = {
