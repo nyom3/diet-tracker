@@ -1852,7 +1852,7 @@ export function App(): JSX.Element {
                         className="photo-thumbnail-remove"
                         type="button"
                         aria-label={`写真${index + 1}を削除`}
-                        disabled={busy !== null}
+                        disabled={busy !== null || photoStatus === 'processing'}
                         onClick={() => removePreparedPhoto(index)}
                       >
                         <X size={18} />
@@ -1887,7 +1887,7 @@ export function App(): JSX.Element {
                   <button
                     className="action-button secondary-action"
                     type="button"
-                    disabled={busy !== null}
+                    disabled={busy !== null || photoStatus === 'processing'}
                     onClick={clearPreparedPhotos}
                   >
                     <Trash2 size={18} />
