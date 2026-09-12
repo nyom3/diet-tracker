@@ -1671,22 +1671,6 @@ function rowToFavorite(row) {
   };
 }
 
-// 通常の利用（数件/日）なら約半年分を1回で読む。行順は追記順に近いという前提で、
-// 疎な記録は recent_meals の件数を満たすまで段階拡張し、上限後は全件へフォールバックする。
-var FOOD_LOG_RANGE_INITIAL_ROWS = 500;
-var FOOD_LOG_RANGE_GROWTH_FACTOR = 4;
-var FOOD_LOG_RANGE_MAX_ATTEMPTS = 3;
-var FOOD_LOG_RANGE_ROWS_PER_DAY = 20;
-
-function foodLogReadInitialRows(rangeDays) {
-  const days = Math.max(1, Math.floor(Number(rangeDays) || 7));
-  return Math.max(FOOD_LOG_RANGE_INITIAL_ROWS, days * FOOD_LOG_RANGE_ROWS_PER_DAY);
-}
-
-function readFoodLogValues(sheet, range) {
-  return sheet.getRange(range.startRow, 1, range.rowCount, FOOD_LOG_HEADERS.length).getValues();
-}
-
 function mapFoodLogRows(values, filterEmptyId) {
   const meals = values
     .map(function (row) { return rowToFoodLog(row); });
@@ -1702,44 +1686,12 @@ function readFoodLogsFromSheet(sheet, options) {
   }
 
   const config = options || {};
-  // NodeのVM境界など別realmのDateも受け付け、テスト・呼び出し側の基準時刻を失わない。
-  const configuredNow = config.now;
-  const now = configuredNow && typeof configuredNow.getTime === 'function'
-    ? new Date(configuredNow.getTime())
-    : new Date();
-  const timezone = config.timezone || Session.getScriptTimeZone();
-  const today = Utilities.formatDate(now, timezone, 'yyyy-MM-dd');
-  const recentMealLimit = Math.max(0, Math.floor(Number(config.recentMealLimit) || 0));
-  const initialRows = foodLogReadInitialRows(config.rangeDays);
   const filterEmptyId = config.filterEmptyId !== false;
-  const dateKeyForTimestamp = function (timestamp) {
-    return Utilities.formatDate(new Date(timestamp), timezone, 'yyyy-MM-dd');
-  };
-  let meals = [];
-
-  for (let attempt = 0; attempt < FOOD_LOG_RANGE_MAX_ATTEMPTS; attempt += 1) {
-    const range = resolveFoodLogReadRange(lastRow, attempt, {
-      initialRows: initialRows,
-      growthFactor: FOOD_LOG_RANGE_GROWTH_FACTOR,
-    });
-    meals = mapFoodLogRows(readFoodLogValues(sheet, range), filterEmptyId);
-
-    if (!recentMealLimit || range.isFull || countRecentMealsForReadValue(
-      meals,
-      now.getTime(),
-      today,
-      dateKeyForTimestamp,
-      recentMealLimit,
-    ) >= recentMealLimit) {
-      return meals;
-    }
-  }
-
-  const fullRange = resolveFoodLogReadRange(lastRow, 0, {
-    initialRows: lastRow - 1,
-    growthFactor: FOOD_LOG_RANGE_GROWTH_FACTOR,
-  });
-  return mapFoodLogRows(readFoodLogValues(sheet, fullRange), filterEmptyId);
+  // 行順は日時順を保証せず、過去行の編集や古い日時の追記もあり得るため、
+  // 期間や直近件数を理由に末尾の一部だけを読むと対象データを取りこぼす。
+  // 食事ログの列だけを全件、1回で読み取ってから各呼び出し元で条件を適用する。
+  const values = sheet.getRange(2, 1, lastRow - 1, FOOD_LOG_HEADERS.length).getValues();
+  return mapFoodLogRows(values, filterEmptyId);
 }
 
 function readFavoritesFromSheet(sheet) {
