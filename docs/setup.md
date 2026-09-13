@@ -58,8 +58,8 @@ Pull request では `.github/workflows/pr.yml` が `npm ci`、`npm test`、`npm 
 検証失敗の切り分けは次のとおり記録する。
 
 - 既知の失敗: 2026-07-12 の Actions run [29191239385](https://github.com/nyom3/diet-tracker/actions/runs/29191239385) は `npm ci` と認証情報復元に成功した後、`Build and deploy` で失敗した。当時の workflow にテスト工程はなく、テスト失敗とは分類しない。関連する #51 では GAS マニフェストの改行差分が記録されている。
-- 今回再現: この変更では `npm test` と `npm run build` をローカルで実行し、いずれも成功した。workflow の構造も、PRでSecretsを参照しないこと、mainでテスト失敗時にデプロイへ到達しないことを確認する。
-- 再現できなかった事項: 上記のGASデプロイ失敗は、ローカルに本番の `.clasp.json` と認証情報を置かずに検証するため再現していない。PR検証からGAS実環境のE2E確認までは行わない。
+- 今回再現: 初回PR [#106](https://github.com/nyom3/diet-tracker/pull/106) の Actions run [34733942174](https://github.com/nyom3/diet-tracker/actions/runs/34733942174) で `npm test` が119/120となり、`tests/dashboardMetrics.test.mjs:217` の「10,000 food + 5,000 health rowsを100ms未満で集計する」性能assertが `103.0ms` で失敗した。失敗を受けて build は実行されず、テスト失敗を握り潰さないworkflow動作も確認できた。調査では食事行ごとに同じtimestampを日付と時刻のため二重解析していたため、`gas/DashboardMetrics.js` で一度の解析結果を共有する最小修正を行った。100ms未満の要件は維持する。
+- 再現できなかった事項: 既知のGASデプロイ失敗は、ローカルに本番の `.clasp.json` と認証情報を置かずに検証するため再現していない。初回PRの性能失敗はローカル環境では常に再現するとは限らず、修正後は `npm ci`、`npm test`、`npm run build` と同じ性能テストを再実行して確認する。PR検証からGAS実環境のE2E確認までは行わない。
 
 ---
 

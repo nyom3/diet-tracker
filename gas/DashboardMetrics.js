@@ -164,15 +164,51 @@ function createDashboardDayAccumulator() {
 
 function readDashboardFoodRecord(row) {
   var timestampValue = dashboardValueAt(row, 1, 'timestamp');
+  var dateDetails = dashboardFoodDateDetails(timestampValue);
   return {
-    date: dashboardToDateKey(timestampValue),
-    timestamp: dashboardToTimestamp(timestampValue),
+    date: dateDetails.date,
+    timestamp: dateDetails.timestamp,
     mealType: String(dashboardValueAt(row, 2, 'meal_type') || ''),
     calories: dashboardToNumber(dashboardValueAt(row, 4, 'calories_kcal')) || 0,
     protein: dashboardToNumber(dashboardValueAt(row, 5, 'protein_g')) || 0,
     fat: dashboardToNumber(dashboardValueAt(row, 6, 'fat_g')) || 0,
     carbs: dashboardToNumber(dashboardValueAt(row, 7, 'carbs_g')) || 0,
   };
+}
+
+function dashboardFoodDateDetails(value) {
+  if (typeof value === 'string') {
+    var trimmed = value.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      return {
+        date: dashboardIsValidDateKey(trimmed) ? trimmed : null,
+        timestamp: null,
+      };
+    }
+
+    var timestamp = dashboardParseTimestamp(trimmed);
+    return {
+      date: timestamp === null ? null : dashboardEpochToJstDateKey(timestamp),
+      timestamp: timestamp,
+    };
+  }
+
+  if (value instanceof Date) {
+    var dateTimestamp = value.getTime();
+    return {
+      date: isNaN(dateTimestamp) ? null : dashboardEpochToJstDateKey(dateTimestamp),
+      timestamp: isNaN(dateTimestamp) ? null : dateTimestamp,
+    };
+  }
+
+  if (typeof value === 'number' && isFinite(value)) {
+    return {
+      date: dashboardEpochToJstDateKey(value),
+      timestamp: value,
+    };
+  }
+
+  return { date: null, timestamp: null };
 }
 
 function readDashboardHealthRecord(row, columnIndexes) {
