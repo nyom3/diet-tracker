@@ -22,6 +22,7 @@ function buildDashboardData(input) {
   var nowDetails = dashboardDateInputDetails(input.now || new Date());
   var dates = dashboardEnumerateDateKeys(period.window_start, period.window_end);
   var healthColumnIndexes = createDashboardHealthColumnIndexes(input.healthHeaders);
+  var dateDetailsCache = Object.create(null);
   var accumulators = {};
 
   dates.forEach(function (date) {
@@ -29,7 +30,7 @@ function buildDashboardData(input) {
   });
 
   (input.foodLogs || []).forEach(function (row) {
-    var food = readDashboardFoodRecord(row);
+    var food = readDashboardFoodRecord(row, dateDetailsCache);
 
     if (
       !food.date ||
@@ -53,7 +54,7 @@ function buildDashboardData(input) {
   });
 
   (input.healthRows || []).forEach(function (row) {
-    var health = readDashboardHealthRecord(row, healthColumnIndexes);
+    var health = readDashboardHealthRecord(row, healthColumnIndexes, dateDetailsCache);
 
     if (!health.date || !Object.prototype.hasOwnProperty.call(accumulators, health.date)) {
       return;
@@ -162,9 +163,9 @@ function createDashboardDayAccumulator() {
   };
 }
 
-function readDashboardFoodRecord(row) {
+function readDashboardFoodRecord(row, dateDetailsCache) {
   var timestampValue = dashboardValueAt(row, 1, 'timestamp');
-  var dateDetails = dashboardFoodDateDetails(timestampValue);
+  var dateDetails = dashboardCachedDateDetails(timestampValue, dateDetailsCache);
   return {
     date: dateDetails.date,
     timestamp: dateDetails.timestamp,
@@ -174,6 +175,20 @@ function readDashboardFoodRecord(row) {
     fat: dashboardToNumber(dashboardValueAt(row, 6, 'fat_g')) || 0,
     carbs: dashboardToNumber(dashboardValueAt(row, 7, 'carbs_g')) || 0,
   };
+}
+
+function dashboardCachedDateDetails(value, cache) {
+  if (typeof value !== 'string') {
+    return dashboardFoodDateDetails(value);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(cache, value)) {
+    return cache[value];
+  }
+
+  var details = dashboardFoodDateDetails(value);
+  cache[value] = details;
+  return details;
 }
 
 function dashboardFoodDateDetails(value) {
@@ -211,7 +226,7 @@ function dashboardFoodDateDetails(value) {
   return { date: null, timestamp: null };
 }
 
-function readDashboardHealthRecord(row, columnIndexes) {
+function readDashboardHealthRecord(row, columnIndexes, dateDetailsCache) {
   var valueAt = function (key) {
     if (Array.isArray(row)) {
       var index = columnIndexes[key];
@@ -225,7 +240,7 @@ function readDashboardHealthRecord(row, columnIndexes) {
   var bodyFatValue = valueAt('body_fat_pct');
 
   return {
-    date: dashboardToDateKey(valueAt('date')),
+    date: dashboardCachedDateDetails(valueAt('date'), dateDetailsCache).date,
     steps: dashboardNonNegativeNumber(stepsValue),
     expenditure: dashboardNonNegativeNumber(expenditureValue),
     weight: dashboardBoundedNumber(weightValue, 20, 300),

@@ -58,8 +58,9 @@ Pull request では `.github/workflows/pr.yml` が `npm ci`、`npm test`、`npm 
 検証失敗の切り分けは次のとおり記録する。
 
 - 既知の失敗: 2026-07-12 の Actions run [29191239385](https://github.com/nyom3/diet-tracker/actions/runs/29191239385) は `npm ci` と認証情報復元に成功した後、`Build and deploy` で失敗した。当時の workflow にテスト工程はなく、テスト失敗とは分類しない。関連する #51 では GAS マニフェストの改行差分が記録されている。
-- 今回再現: 初回PR [#106](https://github.com/nyom3/diet-tracker/pull/106) の Actions run [34733942174](https://github.com/nyom3/diet-tracker/actions/runs/34733942174) で `npm test` が119/120となり、`tests/dashboardMetrics.test.mjs:217` の「10,000 food + 5,000 health rowsを100ms未満で集計する」性能assertが `103.0ms` で失敗した。失敗を受けて build は実行されず、テスト失敗を握り潰さないworkflow動作も確認できた。調査では食事行ごとに同じtimestampを日付と時刻のため二重解析していたため、`gas/DashboardMetrics.js` で一度の解析結果を共有する最小修正を行った。100ms未満の要件は維持する。
-- 再現できなかった事項: 既知のGASデプロイ失敗は、ローカルに本番の `.clasp.json` と認証情報を置かずに検証するため再現していない。初回PRの性能失敗はローカル環境では常に再現するとは限らず、修正後は `npm ci`、`npm test`、`npm run build` と同じ性能テストを再実行して確認する。PR検証からGAS実環境のE2E確認までは行わない。
+- 今回再現: 初回PR [#106](https://github.com/nyom3/diet-tracker/pull/106) の Actions run [34733942174](https://github.com/nyom3/diet-tracker/actions/runs/34733942174) で `npm test` が119/120となり、`tests/dashboardMetrics.test.mjs:217` の「10,000 food + 5,000 health rowsを100ms未満で集計する」性能assertが `103.0ms` で失敗した。失敗を受けて build は実行されず、テスト失敗を握り潰さないworkflow動作も確認できた。食事行ごとに同じtimestampを日付と時刻のため二重解析していたため、`gas/DashboardMetrics.js` で一度の解析結果を共有した。
+- 今回再現（追加）: 上記修正をmainへ反映した後の Deploy run [34734313928](https://github.com/nyom3/diet-tracker/actions/runs/34734313928) でも `npm test` が119/120となり、同じ性能assertが `127.8ms` で失敗した。credentials復元と `Build and deploy` はskipされ、本番へは反映されていない。Node 24.20.0 / ubuntu-24.04 image上の失敗であり、環境差だけとは断定しない。原因を追加測定した結果、同じ15個の日付文字列を10,000食事行・5,000 health行で繰り返し妥当性検証していたため、build呼び出し単位の文字列日付キャッシュを追加した。ローカルの同一15,000行入力20回では最小38.277ms、中央値39.819ms、最大49.932msとなり、100ms未満の要件は維持する。
+- 再現できなかった事項: 既知のGASデプロイ失敗は、ローカルに本番の `.clasp.json` と認証情報を置かずに検証するため再現していない。CIの性能失敗はNode/OSや負荷で変動し、ローカルでは常に同じ値にならないため、修正後は `npm ci`、`npm test`、`npm run build` と実PR Actionsで確認する。PR検証からGAS実環境のE2E確認までは行わない。
 
 ---
 
