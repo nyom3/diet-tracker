@@ -174,6 +174,20 @@ test('HomeSnapshot境界は未記録日・null drop・欠落配列を安全側�
   assert.deepEqual(result.rule_focus.evidence, []);
 });
 
+test('保存済み食事のsourceはapi_editedを保持し、manualをAI由来に変換しない', () => {
+  const result = gasClient.normalizeHomeSnapshot({
+    today_meals: [
+      { id: 'meal_api_edited', source: 'api_edited' },
+      { id: 'meal_manual', source: 'manual' },
+    ],
+  });
+
+  assert.deepEqual(result.today_meals.map((meal) => [meal.id, meal.source]), [
+    ['meal_api_edited', 'api_edited'],
+    ['meal_manual', 'manual'],
+  ]);
+});
+
 test('DaySnapshot境界は欠落配列とnullableな目標を安全側へ正規化する', () => {
   const result = gasClient.normalizeDaySnapshot({
     date: '2026-07-14',
