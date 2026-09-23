@@ -41,6 +41,19 @@ import {
   updateMeal,
 } from './gasClient';
 import { MAX_MEAL_IMAGES, prepareSelectedImage, readSelectedImages, type PreparedImage } from './imageProcessing';
+import {
+  calculateNutritionTotal as calculateTotal,
+  createNutritionSnapshot,
+  normalizeNutritionItem as normalizeItem,
+  normalizeNutritionNumber as normalizeNumber,
+  parseNutritionItems as parseBreakdownItems,
+  resolveMealSource,
+  serializeNutritionItems,
+  scaleNutritionItemAt,
+  updateNutritionItemValue,
+  updateNutritionItemQuantity,
+  type NutritionSnapshot,
+} from './nutritionItemEditing';
 import type {
   AiProviderMode,
   AiStatus,
@@ -75,7 +88,6 @@ import { TodayView } from './views/TodayView';
 import { TrendView } from './views/TrendView';
 import { getSaveBlockedReason } from './saveReason';
 import { appendNutritionItem, replaceNutritionItemAt } from './nutritionItemAi';
-import { scaleNutritionItemAt, updateNutritionItemValue } from './nutritionItemEditing';
 
 const mealTypes: MealType[] = ['朝', '昼', '夜', '間食'];
 const recentMealsPreviewCount = 3;
@@ -102,42 +114,6 @@ const defaultPfcRatio = {
   carbs: 50,
 };
 
-type NutritionSnapshot = {
-  items: Array<Pick<NutritionItem, 'name' | 'quantity_text' | 'calories_kcal' | 'protein_g' | 'fat_g' | 'carbs_g'>>;
-};
-
-function createNutritionSnapshot(items: NutritionItem[]): NutritionSnapshot {
-  return {
-    items: items.map(({ name, quantity_text, calories_kcal, protein_g, fat_g, carbs_g }) => ({
-      name,
-      quantity_text,
-      calories_kcal,
-      protein_g,
-      fat_g,
-      carbs_g,
-    })),
-  };
-}
-
-function hasNutritionSnapshotChanged(
-  snapshot: NutritionSnapshot | null,
-  items: NutritionItem[],
-): boolean {
-  if (!snapshot) return false;
-  const current = createNutritionSnapshot(items);
-  return JSON.stringify(current) !== JSON.stringify(snapshot);
-}
-
-function resolveMealSource(
-  estimateMode: EstimateMode,
-  snapshot: NutritionSnapshot | null,
-  items: NutritionItem[],
-  persistedSource: MealSource | null,
-): MealSource {
-  if (estimateMode === 'manual') return 'manual';
-  if (persistedSource === 'api_edited') return 'api_edited';
-  return hasNutritionSnapshotChanged(snapshot, items) ? 'api_edited' : 'api';
-}
 const emptyTargets: NutritionTargets = {
   calories_kcal: null,
   protein_g: null,
@@ -918,7 +894,7 @@ export function App(): JSX.Element {
 
   function updateItemQuantity(index: number, value: string): void {
     setItems((current) => current.map((item, itemIndex) => (
-      itemIndex === index ? { ...item, quantity_text: value } : item
+      itemIndex === index ? updateNutritionItemQuantity(item, value) : item
     )));
     setHasNutrition(true);
     setItemAiUndo(null);
@@ -2572,7 +2548,7 @@ function buildPayload({
     fat_g: total.fat_g,
     carbs_g: total.carbs_g,
     source: resolveMealSource(estimateMode, apiEstimateSnapshot, items, persistedSource),
-    breakdown_json: JSON.stringify(items),
+    breakdown_json: serializeNutritionItems(items),
   };
 }
 
@@ -2640,36 +2616,6 @@ function normalizeTotal(result: Partial<NutritionTotal>): NutritionTotal {
     fat_g: normalizeNumber(result.fat_g),
     carbs_g: normalizeNumber(result.carbs_g),
   };
-}
-
-function normalizeItem(item: Partial<NutritionItem>): NutritionItem {
-  return {
-    name: String(item.name || '品名未設定'),
-    // サーバー境界の切り詰めを画面上でも再現し、保存後の表示差を防ぐ。
-    quantity_text: String(item.quantity_text || '').trim(),
-    basis: String(item.basis || '').trim().slice(0, 40),
-    calories_kcal: normalizeNumber(item.calories_kcal),
-    protein_g: normalizeNumber(item.protein_g),
-    fat_g: normalizeNumber(item.fat_g),
-    carbs_g: normalizeNumber(item.carbs_g),
-  };
-}
-
-function normalizeNumber(value: unknown): number {
-  const numberValue = Number(value);
-  return Number.isFinite(numberValue) && numberValue >= 0 ? numberValue : 0;
-}
-
-function calculateTotal(items: NutritionItem[]): NutritionTotal {
-  return items.reduce<NutritionTotal>(
-    (sum, item) => ({
-      calories_kcal: Math.round(sum.calories_kcal + item.calories_kcal),
-      protein_g: roundToTenth(sum.protein_g + item.protein_g),
-      fat_g: roundToTenth(sum.fat_g + item.fat_g),
-      carbs_g: roundToTenth(sum.carbs_g + item.carbs_g),
-    }),
-    { ...emptyTotal },
-  );
 }
 
 function calculateTargetsFromRatio(
@@ -2821,16 +2767,6 @@ function derivePfcRatio(targets: NutritionTargets): { protein: number; fat: numb
 
 function isOverTarget(actual: number, target: number | null | undefined): boolean {
   return target != null && actual > target;
-}
-
-function parseBreakdownItems(breakdownJson: string): NutritionItem[] {
-  try {
-    const parsed = JSON.parse(breakdownJson);
-    const rawItems = Array.isArray(parsed) ? parsed : parsed.items;
-    return Array.isArray(rawItems) ? rawItems.map(normalizeItem) : [];
-  } catch {
-    return [];
-  }
 }
 
 type MealDraft = {
