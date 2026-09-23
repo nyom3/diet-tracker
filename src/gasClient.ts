@@ -350,7 +350,7 @@ function normalizeSavedMeal(value: unknown): SavedMeal {
     protein_g: normalizeNonNegativeNumber(meal.protein_g),
     fat_g: normalizeNonNegativeNumber(meal.fat_g),
     carbs_g: normalizeNonNegativeNumber(meal.carbs_g),
-    source: meal.source === 'api' ? 'api' : 'manual',
+    source: meal.source === 'api' || meal.source === 'api_edited' ? meal.source : 'manual',
     breakdown_json: normalizeString(meal.breakdown_json),
   };
 }

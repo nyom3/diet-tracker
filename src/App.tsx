@@ -8,7 +8,6 @@ import {
   History,
   Loader2,
   MessageCircle,
-  Minus,
   Plus,
   RefreshCw,
   Save,
@@ -42,6 +41,19 @@ import {
   updateMeal,
 } from './gasClient';
 import { MAX_MEAL_IMAGES, prepareSelectedImage, readSelectedImages, type PreparedImage } from './imageProcessing';
+import {
+  calculateNutritionTotal as calculateTotal,
+  createNutritionSnapshot,
+  normalizeNutritionItem as normalizeItem,
+  normalizeNutritionNumber as normalizeNumber,
+  parseNutritionItems as parseBreakdownItems,
+  resolveMealSource,
+  serializeNutritionItems,
+  scaleNutritionItemAt,
+  updateNutritionItemValue,
+  updateNutritionItemQuantity,
+  type NutritionSnapshot,
+} from './nutritionItemEditing';
 import type {
   AiProviderMode,
   AiStatus,
@@ -102,46 +114,6 @@ const defaultPfcRatio = {
   carbs: 50,
 };
 
-type NutritionSnapshot = {
-  items: Array<Pick<NutritionItem, 'name' | 'quantity_text' | 'calories_kcal' | 'protein_g' | 'fat_g' | 'carbs_g'>>;
-  servings: number[];
-};
-
-function createNutritionSnapshot(items: NutritionItem[], servings: number[]): NutritionSnapshot {
-  return {
-    items: items.map(({ name, quantity_text, calories_kcal, protein_g, fat_g, carbs_g }) => ({
-      name,
-      quantity_text,
-      calories_kcal,
-      protein_g,
-      fat_g,
-      carbs_g,
-    })),
-    servings: items.map((_, index) => servings[index] || 1),
-  };
-}
-
-function hasNutritionSnapshotChanged(
-  snapshot: NutritionSnapshot | null,
-  items: NutritionItem[],
-  servings: number[],
-): boolean {
-  if (!snapshot) return false;
-  const current = createNutritionSnapshot(items, servings);
-  return JSON.stringify(current) !== JSON.stringify(snapshot);
-}
-
-function resolveMealSource(
-  estimateMode: EstimateMode,
-  snapshot: NutritionSnapshot | null,
-  items: NutritionItem[],
-  servings: number[],
-  persistedSource: MealSource | null,
-): MealSource {
-  if (estimateMode === 'manual') return 'manual';
-  if (persistedSource === 'api_edited') return 'api_edited';
-  return hasNutritionSnapshotChanged(snapshot, items, servings) ? 'api_edited' : 'api';
-}
 const emptyTargets: NutritionTargets = {
   calories_kcal: null,
   protein_g: null,
@@ -159,7 +131,6 @@ type QuickUndo = {
 
 type ItemAiUndoSnapshot = {
   items: NutritionItem[];
-  servings: number[];
   total: NutritionTotal;
   apiEstimateSnapshot: NutritionSnapshot | null;
   persistedSource: MealSource | null;
@@ -284,7 +255,6 @@ export function App(): JSX.Element {
   const [manualJson, setManualJson] = React.useState('');
   const [total, setTotal] = React.useState<NutritionTotal>(emptyTotal);
   const [items, setItems] = React.useState<NutritionItem[]>([]);
-  const [servings, setServings] = React.useState<number[]>([]);
   const [apiEstimateSnapshot, setApiEstimateSnapshot] = React.useState<NutritionSnapshot | null>(null);
   const [persistedSource, setPersistedSource] = React.useState<MealSource | null>(null);
   const [hasItemBreakdown, setHasItemBreakdown] = React.useState(false);
@@ -346,7 +316,7 @@ export function App(): JSX.Element {
     : mealText.trim();
   const savedDescription = displayName.trim();
   const manualPrompt = createManualPrompt(inputMode, estimationInput);
-  const effectiveTotal = standaloneTotalActive || items.length === 0 ? total : calculateTotal(items, servings);
+  const effectiveTotal = standaloneTotalActive || items.length === 0 ? total : calculateTotal(items);
   const visibleRecentMeals = isRecentExpanded
     ? recentMeals
     : recentMeals.slice(0, recentMealsPreviewCount);
@@ -647,15 +617,13 @@ export function App(): JSX.Element {
     }
   }
 
-  function applyNutrition(result: NutritionResult, enableStepper: boolean): void {
+  function applyNutrition(result: NutritionResult, captureApiSnapshot: boolean): void {
     const nextTotal = normalizeTotal(result.total || result);
     const nextItems = Array.isArray(result.items) ? result.items.map(normalizeItem) : [];
-    const nextServings = enableStepper ? nextItems.map(() => 1) : [];
 
     setTotal(nextTotal);
     setItems(nextItems);
-    setServings(nextServings);
-    setApiEstimateSnapshot(enableStepper ? createNutritionSnapshot(nextItems, nextServings) : null);
+    setApiEstimateSnapshot(captureApiSnapshot ? createNutritionSnapshot(nextItems) : null);
     setPersistedSource(null);
     setHasItemBreakdown(nextItems.length > 0);
     setStandaloneTotalActive(nextItems.length === 0);
@@ -725,7 +693,6 @@ export function App(): JSX.Element {
         persistedSource,
         total: effectiveTotal,
         items,
-        servings,
       });
       setBusy('save');
       setStatus({ message: selectedMealId ? '更新中です。' : '保存中です。' });
@@ -767,7 +734,6 @@ export function App(): JSX.Element {
     setManualJson('');
     setTotal(emptyTotal);
     setItems([]);
-    setServings([]);
     setApiEstimateSnapshot(null);
     setPersistedSource(null);
     setHasItemBreakdown(false);
@@ -785,12 +751,10 @@ export function App(): JSX.Element {
   function createItemAiUndoSnapshot(): ItemAiUndoSnapshot {
     return {
       items: items.map((item) => ({ ...item })),
-      servings: [...servings],
       total: { ...total },
       apiEstimateSnapshot: apiEstimateSnapshot
         ? {
           items: apiEstimateSnapshot.items.map((item) => ({ ...item })),
-          servings: [...apiEstimateSnapshot.servings],
         }
         : null,
       persistedSource,
@@ -803,12 +767,10 @@ export function App(): JSX.Element {
   function handleUndoItemAi(): void {
     if (!itemAiUndo) return;
     setItems(itemAiUndo.items.map((item) => ({ ...item })));
-    setServings([...itemAiUndo.servings]);
     setTotal({ ...itemAiUndo.total });
     setApiEstimateSnapshot(itemAiUndo.apiEstimateSnapshot
       ? {
         items: itemAiUndo.apiEstimateSnapshot.items.map((item) => ({ ...item })),
-        servings: [...itemAiUndo.apiEstimateSnapshot.servings],
       }
       : null);
     setPersistedSource(itemAiUndo.persistedSource);
@@ -843,8 +805,7 @@ export function App(): JSX.Element {
       const nextItems = replaceNutritionItemAt(items, index, normalizeItem(result.item));
       setItemAiUndo(createItemAiUndoSnapshot());
       setItems(nextItems);
-      setServings([...servings]);
-      setTotal(calculateTotal(nextItems, servings));
+      setTotal(calculateTotal(nextItems));
       setPersistedSource('api_edited');
       setStandaloneTotalActive(false);
       setHasItemBreakdown(true);
@@ -886,15 +847,11 @@ export function App(): JSX.Element {
       });
       const nextItem = normalizeItem(result.item);
       const nextItems = appendNutritionItem(items, nextItem);
-      const nextServings = estimateMode === 'api'
-        ? [...(servings.length ? servings : items.map(() => 1)), 1]
-        : servings;
       const preserveStandaloneTotal = items.length === 0 && standaloneTotalActive;
       setItemAiUndo(createItemAiUndoSnapshot());
       setItems(nextItems);
-      setServings(nextServings);
       if (!preserveStandaloneTotal) {
-        setTotal(calculateTotal(nextItems, nextServings));
+        setTotal(calculateTotal(nextItems));
       }
       setPersistedSource('api_edited');
       setHasItemBreakdown(true);
@@ -916,11 +873,10 @@ export function App(): JSX.Element {
     }
   }
 
-  function updateServing(index: number, delta: number): void {
-    const nextServings = servings.length ? [...servings] : items.map(() => 1);
-    nextServings[index] = Math.max(0.1, Math.round(((nextServings[index] || 1) + delta) * 10) / 10);
-    setServings(nextServings);
-    setTotal(calculateTotal(items, nextServings));
+  function updateItemScale(index: number, multiplier: number): void {
+    const nextItems = scaleNutritionItemAt(items, index, multiplier);
+    setItems(nextItems);
+    setTotal(calculateTotal(nextItems));
     setStandaloneTotalActive(false);
     setHasNutrition(true);
     setItemAiUndo(null);
@@ -931,14 +887,14 @@ export function App(): JSX.Element {
       itemIndex === index ? { ...item, name: value } : item
     ));
     setItems(nextItems);
-    setTotal(calculateTotal(nextItems, servings));
+    setTotal(calculateTotal(nextItems));
     setHasNutrition(true);
     setItemAiUndo(null);
   }
 
   function updateItemQuantity(index: number, value: string): void {
     setItems((current) => current.map((item, itemIndex) => (
-      itemIndex === index ? { ...item, quantity_text: value } : item
+      itemIndex === index ? updateNutritionItemQuantity(item, value) : item
     )));
     setHasNutrition(true);
     setItemAiUndo(null);
@@ -946,10 +902,10 @@ export function App(): JSX.Element {
 
   function updateItemNutrition(index: number, key: NutritionKey, value: string): void {
     const nextItems = items.map((item, itemIndex) => (
-      itemIndex === index ? { ...item, [key]: normalizeNumber(value) } : item
+      itemIndex === index ? updateNutritionItemValue(item, key, normalizeNumber(value)) : item
     ));
     setItems(nextItems);
-    setTotal(calculateTotal(nextItems, servings));
+    setTotal(calculateTotal(nextItems));
     setStandaloneTotalActive(false);
     setHasNutrition(true);
     setItemAiUndo(null);
@@ -957,15 +913,13 @@ export function App(): JSX.Element {
 
   function removeItem(index: number): void {
     const nextItems = items.filter((_, itemIndex) => itemIndex !== index);
-    const nextServings = servings.length ? servings.filter((_, itemIndex) => itemIndex !== index) : [];
     const restoreStandaloneTotal = nextItems.length === 0 && standaloneItemAdded && standaloneTotalActive;
     setItems(nextItems);
-    setServings(nextServings);
     if (restoreStandaloneTotal) {
       setStandaloneTotalActive(true);
       setHasItemBreakdown(false);
     } else {
-      setTotal(calculateTotal(nextItems, nextServings));
+      setTotal(calculateTotal(nextItems));
       setStandaloneTotalActive(false);
     }
     setStandaloneItemAdded(false);
@@ -978,15 +932,11 @@ export function App(): JSX.Element {
   function addItem(): void {
     const nextItems = [...items, createEmptyNutritionItem()];
     const preserveStandaloneTotal = items.length === 0 && standaloneTotalActive;
-    const nextServings = estimateMode === 'api'
-      ? [...(servings.length ? servings : items.map(() => 1)), 1]
-      : servings;
     setItems(nextItems);
-    setServings(nextServings);
     setHasItemBreakdown(true);
     setStandaloneTotalActive(preserveStandaloneTotal);
     setStandaloneItemAdded(preserveStandaloneTotal);
-    if (!preserveStandaloneTotal) setTotal(calculateTotal(nextItems, nextServings));
+    if (!preserveStandaloneTotal) setTotal(calculateTotal(nextItems));
     setHasNutrition(true);
     setItemAiUndo(null);
   }
@@ -1209,10 +1159,8 @@ export function App(): JSX.Element {
       fat_g: meal.fat_g,
       carbs_g: meal.carbs_g,
     });
-    const nextServings = nextItems.map(() => 1);
     setItems(nextItems);
-    setServings(nextServings);
-    setApiEstimateSnapshot(meal.source === 'manual' ? null : createNutritionSnapshot(nextItems, nextServings));
+    setApiEstimateSnapshot(meal.source === 'manual' ? null : createNutritionSnapshot(nextItems));
     setPersistedSource(meal.source);
     setHasItemBreakdown(nextItems.length > 0);
     setStandaloneTotalActive(nextItems.length === 0);
@@ -2134,7 +2082,6 @@ export function App(): JSX.Element {
             )}
             <ul className="item-list">
               {items.map((item, index) => {
-                const serving = servings[index] || 1;
                 return (
                   <li key={`item-${index}`}>
                     <div className="item-head">
@@ -2145,7 +2092,7 @@ export function App(): JSX.Element {
                           onChange={(event) => updateItemName(index, event.target.value)}
                         />
                       </label>
-                      <span>{Math.round(item.calories_kcal * serving)} kcal</span>
+                      <span>{Math.round(item.calories_kcal)} kcal</span>
                     </div>
                     <div className="item-context-grid">
                       <label className="field item-quantity-field">
@@ -2220,7 +2167,7 @@ export function App(): JSX.Element {
                     <div className="item-nutrition-grid">
                       {nutritionKeys.map(({ key, label, unit, step }) => (
                         <label className="item-nutrition-field" key={key}>
-                          <span>{label}（1人前）</span>
+                          <span>{label}（現在値）</span>
                           <input
                             type="number"
                             min="0"
@@ -2233,20 +2180,30 @@ export function App(): JSX.Element {
                         </label>
                       ))}
                     </div>
-                    <small className="item-serving-hint">
-                      入力値は1人前あたり。現在の合計は {Math.round(item.calories_kcal * serving)} kcal です。
+                    <small className="item-nutrition-hint">
+                      表示中の栄養値が保存されます。分量の文字列だけを変更してもkcal・PFCは変わりません。量調整は数値だけを比例変更するため、分量表記は必要に応じて手動で合わせてください。
                     </small>
-                    {estimateMode === 'api' && (
-                      <div className="stepper" aria-label={`${item.name}の人前`}>
-                        <button type="button" onClick={() => updateServing(index, -0.1)}>
-                          <Minus size={16} />
+                    <div className="item-scale-controls" aria-label={`${item.name}の量調整`}>
+                      <span>量調整（kcal・PFCを比例変更）</span>
+                      <div className="item-scale-actions">
+                        <button
+                          className="action-button secondary-action"
+                          type="button"
+                          disabled={busy !== null}
+                          onClick={() => updateItemScale(index, 0.5)}
+                        >
+                          半分
                         </button>
-                        <span>{serving.toFixed(1)} 人前</span>
-                        <button type="button" onClick={() => updateServing(index, 0.1)}>
-                          <Plus size={16} />
+                        <button
+                          className="action-button secondary-action"
+                          type="button"
+                          disabled={busy !== null}
+                          onClick={() => updateItemScale(index, 2)}
+                        >
+                          2倍
                         </button>
                       </div>
-                    )}
+                    </div>
                     <button
                       className="item-remove-button"
                       type="button"
@@ -2552,7 +2509,6 @@ function buildPayload({
   persistedSource,
   total,
   items,
-  servings,
 }: {
   datetime: string;
   mealType: MealType;
@@ -2562,7 +2518,6 @@ function buildPayload({
   persistedSource: MealSource | null;
   total: NutritionTotal;
   items: NutritionItem[];
-  servings: number[];
 }): SaveMealPayload {
   if (!datetime) {
     throw new Error('食事日時を入力してください。');
@@ -2592,8 +2547,8 @@ function buildPayload({
     protein_g: total.protein_g,
     fat_g: total.fat_g,
     carbs_g: total.carbs_g,
-    source: resolveMealSource(estimateMode, apiEstimateSnapshot, items, servings, persistedSource),
-    breakdown_json: JSON.stringify(applyServings(items, servings)),
+    source: resolveMealSource(estimateMode, apiEstimateSnapshot, items, persistedSource),
+    breakdown_json: serializeNutritionItems(items),
   };
 }
 
@@ -2663,36 +2618,6 @@ function normalizeTotal(result: Partial<NutritionTotal>): NutritionTotal {
   };
 }
 
-function normalizeItem(item: Partial<NutritionItem>): NutritionItem {
-  return {
-    name: String(item.name || '品名未設定'),
-    // サーバー境界の切り詰めを画面上でも再現し、保存後の表示差を防ぐ。
-    quantity_text: String(item.quantity_text || '').trim(),
-    basis: String(item.basis || '').trim().slice(0, 40),
-    calories_kcal: normalizeNumber(item.calories_kcal),
-    protein_g: normalizeNumber(item.protein_g),
-    fat_g: normalizeNumber(item.fat_g),
-    carbs_g: normalizeNumber(item.carbs_g),
-  };
-}
-
-function normalizeNumber(value: unknown): number {
-  const numberValue = Number(value);
-  return Number.isFinite(numberValue) && numberValue >= 0 ? numberValue : 0;
-}
-
-function calculateTotal(items: NutritionItem[], servings: number[]): NutritionTotal {
-  return applyServings(items, servings).reduce<NutritionTotal>(
-    (sum, item) => ({
-      calories_kcal: Math.round(sum.calories_kcal + item.calories_kcal),
-      protein_g: roundToTenth(sum.protein_g + item.protein_g),
-      fat_g: roundToTenth(sum.fat_g + item.fat_g),
-      carbs_g: roundToTenth(sum.carbs_g + item.carbs_g),
-    }),
-    { ...emptyTotal },
-  );
-}
-
 function calculateTargetsFromRatio(
   caloriesInput: string,
   ratio: { protein: number; fat: number; carbs: number },
@@ -2708,21 +2633,6 @@ function calculateTargetsFromRatio(
     fat_g: roundToTenth((calories * (safeRatio.fat / safeTotal)) / 9),
     carbs_g: roundToTenth((calories * (safeRatio.carbs / safeTotal)) / 4),
   };
-}
-
-function applyServings(items: NutritionItem[], servings: number[]): NutritionItem[] {
-  return items.map((item, index) => {
-    const serving = servings[index] || 1;
-    return {
-      name: item.name,
-      quantity_text: item.quantity_text,
-      basis: item.basis,
-      calories_kcal: roundToTenth(item.calories_kcal * serving),
-      protein_g: roundToTenth(item.protein_g * serving),
-      fat_g: roundToTenth(item.fat_g * serving),
-      carbs_g: roundToTenth(item.carbs_g * serving),
-    };
-  });
 }
 
 function createEmptyNutritionItem(): NutritionItem {
@@ -2857,16 +2767,6 @@ function derivePfcRatio(targets: NutritionTargets): { protein: number; fat: numb
 
 function isOverTarget(actual: number, target: number | null | undefined): boolean {
   return target != null && actual > target;
-}
-
-function parseBreakdownItems(breakdownJson: string): NutritionItem[] {
-  try {
-    const parsed = JSON.parse(breakdownJson);
-    const rawItems = Array.isArray(parsed) ? parsed : parsed.items;
-    return Array.isArray(rawItems) ? rawItems.map(normalizeItem) : [];
-  } catch {
-    return [];
-  }
 }
 
 type MealDraft = {

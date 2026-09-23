@@ -1972,31 +1972,36 @@ h2 {
   font-weight: 800;
 }
 
-.item-serving-hint {
+.item-nutrition-hint {
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
 }
 
-.stepper {
+.item-scale-controls {
   display: grid;
-  grid-template-columns: 44px 1fr 44px;
-  align-items: center;
   gap: 8px;
-}
-
-.stepper button {
-  display: grid;
-  min-height: 44px;
-  place-items: center;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-soft);
-  color: var(--ink);
+  padding: 10px;
 }
 
-.stepper span {
-  text-align: center;
+.item-scale-controls > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.item-scale-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.item-scale-actions .action-button {
+  width: 100%;
+  min-height: 44px;
 }
 
 .sticky-actions {
