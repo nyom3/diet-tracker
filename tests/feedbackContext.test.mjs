@@ -61,7 +61,7 @@ test('昼まで: 残り予算を踏まえた次の一食を要求する', () => 
   assert.match(prompt, /calories_kcal: 合計 1000 \/ 目標 1800 \/ 差分 800/);
 });
 
-test('間食のみ: 記録タイプを保持し、途中向けの現行導線を使う', () => {
+test('間食のみ: 記録タイプを保持し、栄養判断は保留する', () => {
   const context = feedback.buildTodayFeedbackContext(
     [meal('間食')],
     { calories_kcal: 1800, protein_g: 90, fat_g: 60, carbs_g: 220 },
@@ -72,7 +72,32 @@ test('間食のみ: 記録タイプを保持し、途中向けの現行導線を
   assert.deepEqual(plain(context.meal_types), ['間食']);
   assert.equal(context.main_meal_count, 0);
   assert.match(prompt, /記録済み食事タイプ: 間食/);
-  assert.match(prompt, /次の一食の配分/);
+  assert.match(prompt, /判断を保留/);
+});
+
+test('主要2食未満では未記録を栄養不足と断定せず判断を保留する', () => {
+  const context = feedback.buildTodayFeedbackContext(
+    [meal('朝')],
+    { calories_kcal: 1800, protein_g: 90, fat_g: 60, carbs_g: 220 },
+    '10:00',
+  );
+  const prompt = feedback.buildTodayFeedbackPrompt(context);
+
+  assert.match(prompt, /2食未満/);
+  assert.match(prompt, /不足.*断定せず/);
+  assert.match(prompt, /判断を保留/);
+});
+
+test('kcal目標超過時は食事追加を勧めず置き換えや配分調整を指示する', () => {
+  const context = feedback.buildTodayFeedbackContext(
+    [meal('朝'), meal('昼')],
+    { calories_kcal: 800, protein_g: 90, fat_g: 60, carbs_g: 220 },
+    '13:05',
+  );
+  const prompt = feedback.buildTodayFeedbackPrompt(context);
+
+  assert.match(prompt, /calories_kcal: .*差分 -200/);
+  assert.match(prompt, /食事の追加を勧めず、置き換えや分量・配分の調整/);
 });
 
 test('目標未設定: 未設定を明示し、差分値を捏造しない', () => {

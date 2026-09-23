@@ -92,9 +92,9 @@ test('7種類の示唆を適用可否と優先順位付きで生成する', () =
   const suggestions = coach.buildCoachEvidence('trend', days, goals, days.at(-1));
   assert.deepEqual(JSON.parse(JSON.stringify(suggestions.map(({ type }) => type))), [
     'today_next_meal',
+    'macro_balance',
     'weight_trend',
     'energy_pattern',
-    'protein',
     'activity',
     'progress',
   ]);
@@ -114,7 +114,7 @@ test('focusはevidence生成段階で対応する観点だけに絞り、weight�
   const days = makeDays();
   assert.deepEqual(JSON.parse(JSON.stringify(coach.buildCoachEvidence('trend', days, goals, days.at(-1), 'weight').map(({ type }) => type))), ['weight_trend', 'progress']);
   assert.deepEqual(JSON.parse(JSON.stringify(coach.buildCoachEvidence('trend', days, goals, days.at(-1), 'energy').map(({ type }) => type))), ['energy_pattern']);
-  assert.deepEqual(JSON.parse(JSON.stringify(coach.buildCoachEvidence('trend', days, goals, days.at(-1), 'macros').map(({ type }) => type))), ['protein']);
+  assert.deepEqual(JSON.parse(JSON.stringify(coach.buildCoachEvidence('trend', days, goals, days.at(-1), 'macros').map(({ type }) => type))), ['macro_balance']);
   assert.deepEqual(JSON.parse(JSON.stringify(coach.buildCoachEvidence('trend', days, goals, days.at(-1), 'activity').map(({ type }) => type))), ['activity']);
 
   const incompleteDays = days.map((day) => ({ ...day, coverage: { ratio: 1 / 3, adequate: false } }));
@@ -127,11 +127,96 @@ test('focusはevidence生成段階で対応する観点だけに絞り、weight�
 
   const loggingStable = coach.buildCoachInsight('trend', days, goals, days.at(-1), 'logging');
   assert.match(loggingStable.headline, /追加案内はありません/);
-  const macrosStable = coach.buildCoachInsight('trend', days, { ...goals, protein_g: 50 }, days.at(-1), 'macros');
-  assert.match(macrosStable.headline, /追加案内はありません/);
+  const stableDays = days.map((day) => ({
+    ...day,
+    intake: { calories_kcal: 2000, protein_g: 100, fat_g: 70, carbs_g: 250 },
+  }));
+  const macrosStable = coach.buildCoachInsight('trend', stableDays, goals, stableDays.at(-1), 'macros');
+  assert.equal(macrosStable.selected_action, null);
+  assert.match(macrosStable.headline, /維持|安定/);
 });
 
-test('行動候補は5テンプレートの条件を満たす場合だけ生成する', () => {
+test('macros focusは十分な記録日のPFCと総エネルギーを使い、最大の超過に沿った候補を選ぶ', () => {
+  const fatOvershootDays = makeDays().map((day) => ({
+    ...day,
+    intake: { calories_kcal: 1900, protein_g: 100, fat_g: 100, carbs_g: 250 },
+  }));
+  const fatOvershoot = coach.buildCoachInsight('trend', fatOvershootDays, goals, fatOvershootDays.at(-1), 'macros');
+
+  assert.equal(fatOvershoot.evidence[0].key, 'fat_g');
+  assert.match(fatOvershoot.evidence[0].label, /脂質/);
+  assert.equal(fatOvershoot.selected_action.category, 'macro_balance');
+  assert.match(fatOvershoot.selected_action.text, /脂質|置き換え|調整/);
+  assert.doesNotMatch(fatOvershoot.selected_action.text, /タンパク質源を1品追加/);
+});
+
+test('記録途中は品数が少ない日を不足日として数えず、根拠なしで保留する', () => {
+  const incompleteDays = makeDays().map((day) => ({
+    ...day,
+    meal_count: 1,
+    coverage: { ratio: 1 / 3, adequate: false },
+    intake: { calories_kcal: 400, protein_g: 10, fat_g: 10, carbs_g: 30 },
+  }));
+  const insight = coach.buildCoachInsight('trend', incompleteDays, goals, incompleteDays.at(-1), 'macros');
+
+  assert.deepEqual(JSON.parse(JSON.stringify(insight.evidence)), []);
+  assert.equal(insight.selected_action, null);
+  assert.match(insight.headline, /データ|記録/);
+  assert.doesNotMatch(insight.summary, /継続して不足/);
+
+  const missingGoal = coach.buildCoachInsight('trend', makeDays(), { ...goals, fat_g: null }, makeDays().at(-1), 'macros');
+  assert.deepEqual(JSON.parse(JSON.stringify(missingGoal.evidence)), []);
+  assert.equal(missingGoal.selected_action, null);
+  assert.match(missingGoal.headline, /データ|記録/);
+});
+
+test('P不足でも総kcal超過なら食品追加ではなく置き換え候補を選ぶ', () => {
+  const overBudgetDays = makeDays().map((day) => ({
+    ...day,
+    intake: { calories_kcal: 2200, protein_g: 50, fat_g: 70, carbs_g: 250 },
+  }));
+  const insight = coach.buildCoachInsight('trend', overBudgetDays, goals, overBudgetDays.at(-1), 'macros');
+
+  assert.equal(insight.evidence[0].key, 'protein_g');
+  assert.ok(insight.selected_action);
+  assert.notEqual(insight.selected_action.category, 'protein');
+  assert.match(insight.selected_action.text, /置き換え|調整|増やさ/);
+  assert.doesNotMatch(insight.selected_action.text, /1品追加/);
+});
+
+test('十分に記録されたP不足でkcalに余裕があればP候補を維持する', () => {
+  const proteinDeficitDays = makeDays().map((day) => ({
+    ...day,
+    intake: { calories_kcal: 1800, protein_g: 50, fat_g: 70, carbs_g: 250 },
+  }));
+  const insight = coach.buildCoachInsight('trend', proteinDeficitDays, goals, proteinDeficitDays.at(-1), 'macros');
+
+  assert.equal(insight.evidence[0].key, 'protein_g');
+  assert.equal(insight.selected_action.category, 'macro_balance');
+  assert.match(insight.selected_action.text, /タンパク質/);
+});
+
+test('今日が十分に記録されP不足でも、期間に十分な記録日が2日未満なら今日のP候補を残す', () => {
+  const days = makeDays().map((day) => ({
+    ...day,
+    coverage: { ratio: 1 / 3, adequate: false },
+    intake: { calories_kcal: 400, protein_g: 10, fat_g: 10, carbs_g: 30 },
+  }));
+  const today = {
+    ...days.at(-1),
+    coverage: { ratio: 2 / 3, adequate: true },
+    intake: { calories_kcal: 1500, protein_g: 50, fat_g: 50, carbs_g: 180 },
+  };
+  days[days.length - 1] = today;
+
+  const insight = coach.buildCoachInsight('today', days, goals, today);
+
+  assert.equal(insight.evidence[0].key, 'protein_g');
+  assert.equal(insight.selected_action.key, 'protein');
+  assert.match(insight.selected_action.text, /タンパク質/);
+});
+
+test('行動候補は記録十分度と差分の方向に応じて生成する', () => {
   const days = makeDays();
   const candidates = coach.buildCoachActionCandidates(days, goals, days.at(-1));
   assert.deepEqual(JSON.parse(JSON.stringify(candidates.map(({ key }) => key))), ['logging', 'energy', 'protein', 'macro_balance', 'activity']);
@@ -146,7 +231,7 @@ test('行動候補は5テンプレートの条件を満たす場合だけ生成�
     intake: { calories_kcal: 2100, protein_g: 100, fat_g: 70, carbs_g: 250 },
   });
   const restricted = coach.buildCoachActionCandidates(noNumericConditions, goals, completeToday);
-  assert.deepEqual(JSON.parse(JSON.stringify(restricted.map(({ key }) => key))), ['logging']);
+  assert.deepEqual(JSON.parse(JSON.stringify(restricted.map(({ key }) => key))), ['logging', 'energy', 'macro_balance']);
 });
 
 test('候補は優先順位順に最大3組へ組み立てられる', () => {
@@ -155,7 +240,7 @@ test('候補は優先順位順に最大3組へ組み立てられる', () => {
   const actions = coach.buildCoachActionCandidates(days, goals, days.at(-1));
   const pairs = coach.buildCoachCandidatePairs(evidence, actions);
   assert.equal(pairs.length, 3);
-  assert.deepEqual(JSON.parse(JSON.stringify(pairs.map(({ type }) => type))), ['today_next_meal', 'weight_trend', 'energy_pattern']);
+  assert.deepEqual(JSON.parse(JSON.stringify(pairs.map(({ type }) => type))), ['today_next_meal', 'macro_balance', 'weight_trend']);
   pairs.forEach((pair) => {
     assert.ok(pair.evidence_key);
     assert.ok(pair.action_key);
@@ -255,8 +340,8 @@ test('buildCoachInsightはrules由来の主候補と代替候補を返す', () =
   const insight = coach.buildCoachInsight('trend', days, goals, days.at(-1));
   assert.equal(insight.scope, 'trend');
   assert.equal(insight.source, 'rules');
-  assert.equal(insight.selected_action.key, 'macro_balance');
-  assert.equal(insight.alternative_action.key, 'activity');
-  assert.equal(insight.evidence[0].key, 'today_next_meal');
+  assert.equal(insight.selected_action.key, 'protein');
+  assert.equal(insight.alternative_action.key, 'macro_balance');
+  assert.equal(insight.evidence[0].key, 'protein_g');
   assert.match(insight.generated_at, /^2026-07-15T00:00:00\.000\+09:00$/);
 });

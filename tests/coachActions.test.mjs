@@ -16,7 +16,7 @@ const pair = {
   type: 'protein',
 };
 
-function createHarness(initialRows = []) {
+function createHarness(initialRows = [], candidatePair = pair) {
   const rows = initialRows.map((row) => [...row]);
   const sheet = {
     getLastRow: () => rows.length + 1,
@@ -57,9 +57,9 @@ function createHarness(initialRows = []) {
       days: [],
     },
   });
-  context.buildCoachEvidence = () => [pair];
-  context.buildCoachActionCandidates = () => [pair.action];
-  context.buildCoachCandidatePairs = () => [pair];
+  context.buildCoachEvidence = () => [candidatePair];
+  context.buildCoachActionCandidates = () => [candidatePair.action];
+  context.buildCoachCandidatePairs = () => [candidatePair];
   return {
     context,
     rows,
@@ -97,6 +97,28 @@ test('acceptCoachActionは候補を再計算し、同日plannedをdismissして�
   assert.equal(harness.rows[1][5], pair.action.text);
   assert.deepEqual(JSON.parse(harness.rows[1][8]), pair.evidence);
   assert.equal(harness.getReleaseCount(), 1);
+});
+
+test('PFC置き換え候補は承認後に保存され、完了と見送りへ遷移できる', () => {
+  const todayBalancePair = {
+    ...pair,
+    evidence_key: 'fat_g',
+    action_key: 'today_balance',
+    evidence: [{ key: 'fat_g', label: '今日の脂質の超過', value: 100, unit: 'g', comparison_value: 70, comparison_label: '脂質の1日目標', period_start: '2026-07-15', period_end: '2026-07-15', confidence: 'medium' }],
+    action: { key: 'today_balance', category: 'macro_balance', text: '脂質の多い食材を低脂質なものへ置き換える', target_date: '2026-07-16' },
+  };
+
+  ['completed', 'dismissed'].forEach((status) => {
+    const harness = createHarness([], todayBalancePair);
+    const accepted = harness.context.acceptCoachAction({ scope: 'trend', range_days: 30, action_key: 'today_balance' });
+    const updated = harness.context.setCoachActionStatus(accepted.id, status);
+
+    assert.equal(accepted.key, 'today_balance');
+    assert.equal(accepted.category, 'macro_balance');
+    assert.equal(updated.status, status);
+    assert.equal(harness.rows[0][4], 'today_balance');
+    assert.deepEqual(JSON.parse(harness.rows[0][8]), todayBalancePair.evidence);
+  });
 });
 
 test('候補を再現できない場合はcoach_actionsへ書き込まない', () => {
