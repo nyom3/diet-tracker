@@ -41,9 +41,14 @@ vm.runInNewContext([
   extractFunction(gasSource, 'normalizeTrustedImages'),
   extractFunction(gasSource, 'normalizeSingleNutritionItem'),
   extractFunction(gasSource, 'normalizeNutritionItem'),
+  extractFunction(gasSource, 'normalizeNutritionTotal'),
+  extractFunction(gasSource, 'normalizeNutritionResult'),
   extractFunction(gasSource, 'toNonNegativeNumber'),
+  extractFunction(gasSource, 'buildNutritionItemAiPrompt'),
   'this.validateNutritionItemAiRequest = validateNutritionItemAiRequest;',
   'this.normalizeSingleNutritionItem = normalizeSingleNutritionItem;',
+  'this.normalizeNutritionResult = normalizeNutritionResult;',
+  'this.buildNutritionItemAiPrompt = buildNutritionItemAiPrompt;',
 ].join('\n'), gasContext);
 
 const item = {
@@ -72,6 +77,57 @@ test('品目AIの追加は既存品目を変更せず末尾へ追加する', () 
 
   assert.deepEqual(result, [existing[0], added]);
   assert.strictEqual(result[0], existing[0]);
+});
+
+test('品目AIプロンプトは訂正の明示分量を優先し、画像の個数水増しを禁じる', () => {
+  const prompt = gasContext.buildNutritionItemAiPrompt({
+    operation: 'edit',
+    item,
+    instruction: '食パン1枚として計算。画像の見え方で2枚に増やさない',
+    mealDescription: '朝食',
+    existingItemNames: ['食パン'],
+    images: [{ base64: 'synthetic' }],
+  });
+
+  assert.match(prompt, /訂正・追加指示.*1枚/);
+  assert.match(prompt, /個数や分量が明示されている場合は最優先/);
+  assert.match(prompt, /同じ現物.*重複計上せず/);
+  assert.match(prompt, /確認できない個数を足さない/);
+  assert.match(prompt, /quantity_text.*basis.*カロリー.*PFC/);
+});
+
+test('画像推定結果の正規化はquantity_text・basis・同じ分量の栄養値を保持する', () => {
+  const result = gasContext.normalizeNutritionResult({
+    display_name: '食パン',
+    items: [{
+      name: '食パン',
+      quantity_text: '1枚（約60g）',
+      basis: '入力の1枚、重さは推定',
+      calories_kcal: 158,
+      protein_g: 5.6,
+      fat_g: 2.6,
+      carbs_g: 28.4,
+    }],
+    total: { calories_kcal: 158, protein_g: 5.6, fat_g: 2.6, carbs_g: 28.4 },
+  }, '食事');
+
+  assert.equal(result.items[0].quantity_text, '1枚（約60g）');
+  assert.equal(result.items[0].basis, '入力の1枚、重さは推定');
+  assert.deepEqual(JSON.parse(JSON.stringify(result.items[0])), {
+    name: '食パン',
+    quantity_text: '1枚（約60g）',
+    basis: '入力の1枚、重さは推定',
+    calories_kcal: 158,
+    protein_g: 5.6,
+    fat_g: 2.6,
+    carbs_g: 28.4,
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(result.total)), {
+    calories_kcal: 158,
+    protein_g: 5.6,
+    fat_g: 2.6,
+    carbs_g: 28.4,
+  });
 });
 
 test('GAS境界は操作種別・指示長・品目数・PFC非負値を検証する', () => {
@@ -119,6 +175,12 @@ test('GAS境界はAIの複数品目応答を拒否する', () => {
 });
 
 test('GAS境界は画像を全件検証し、最大3枚を超える配列を拒否する', () => {
+  assert.deepEqual(JSON.parse(JSON.stringify(gasContext.normalizeTrustedImages([]))), []);
+
+  const singleImage = gasContext.normalizeTrustedImages([{ base64: 'single' }]);
+  assert.equal(singleImage.length, 1);
+  assert.equal(singleImage[0].base64, 'single');
+
   const images = gasContext.normalizeTrustedImages([
     { base64: 'first' },
     { base64: 'second' },
