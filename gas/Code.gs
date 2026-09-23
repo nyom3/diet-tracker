@@ -684,6 +684,13 @@ function buildCoachDashboardData(rangeDays, now, meals, goals) {
 
 function buildCoachAiPrompt(scope, context, today, candidatePairs, focus) {
   const periodStart = scope === 'today' ? context.dashboard.window_end : context.dashboard.window_start;
+  const todayNutrition = today.coverage.adequate ? today.intake : {
+    calories_kcal: null,
+    protein_g: null,
+    fat_g: null,
+    carbs_g: null,
+  };
+  const averageIntake = scope === 'today' ? todayNutrition : buildCoachAverageIntake(context.dashboard.days);
   const periodMeals = (context.meals || []).map(function (meal) {
     const timestamp = new Date(meal.timestamp);
     if (isNaN(timestamp.getTime())) {
@@ -709,17 +716,14 @@ function buildCoachAiPrompt(scope, context, today, candidatePairs, focus) {
       logging_days: today.meal_count > 0 ? 1 : 0,
       adequate_days: today.coverage.adequate ? 1 : 0,
       recording_coverage_ratio: today.coverage.ratio,
-      average_intake_kcal: today.intake.calories_kcal,
-      average_protein_g: today.intake.protein_g,
+      average_intake_kcal: todayNutrition.calories_kcal,
+      average_protein_g: todayNutrition.protein_g,
       average_steps: today.steps,
       latest_weight_trend_kg: today.weight_trend_kg,
       weight_change_kg: null,
     } : context.dashboard.summary,
-    averages: scope === 'today' ? today.intake : buildCoachAverageIntake(context.dashboard.days),
-    goal_gaps: buildCoachGoalGaps(
-      scope === 'today' ? today.intake : buildCoachAverageIntake(context.dashboard.days),
-      context.dashboard.goals,
-    ),
+    averages: averageIntake,
+    goal_gaps: buildCoachGoalGaps(averageIntake, context.dashboard.goals),
     meals: periodMeals,
     candidates: candidatePairs.map(function (pair) {
       return {
@@ -731,6 +735,8 @@ function buildCoachAiPrompt(scope, context, today, candidatePairs, focus) {
   };
 
   return 'あなたは食事記録アプリの安全なコーチです。入力JSONに含まれる候補だけを選び、医療診断や目標変更をせずに回答してください。' +
+    '行動キーの意味は、logging=記録、energy=エネルギー差に沿った配分、protein=カロリーに余裕がある場合のタンパク質、macro_balance=期間平均のPFC調整、today_balance=今日のPFC差に沿った置き換えや配分調整、activity=歩数です。' +
+    '栄養に関する説明は候補のevidenceだけを根拠にし、記録が不十分な場合は不足を断定せず判断を保留してください。' +
     '見出しは40文字以内、説明は160文字以内です。説明に数字を書く場合は、選択した候補のevidenceにあるvalueまたはcomparison_valueと同じ値を、そのままの桁で引用してください。数字に桁区切りのカンマは使わず、期間の日付は説明に書かないでください。' +
     'JSONのみで返し、action_keyとevidence_keyは同じ候補ペアから選んでください。' +
     'headline、summary、evidence_key、action_key以外のキーは返さないでください。\n' +
@@ -738,17 +744,19 @@ function buildCoachAiPrompt(scope, context, today, candidatePairs, focus) {
 }
 
 function buildCoachAverageIntake(days) {
-  const loggedDays = (days || []).filter(function (day) { return day.meal_count > 0; });
+  const adequateDays = (days || []).filter(function (day) {
+    return day.coverage && day.coverage.adequate === true;
+  });
   const keys = ['calories_kcal', 'protein_g', 'fat_g', 'carbs_g'];
   const result = {};
   keys.forEach(function (key) {
-    if (loggedDays.length === 0) {
+    if (adequateDays.length === 0) {
       result[key] = null;
       return;
     }
-    result[key] = Math.round(loggedDays.reduce(function (total, day) {
+    result[key] = Math.round(adequateDays.reduce(function (total, day) {
       return total + day.intake[key];
-    }, 0) / loggedDays.length * 10) / 10;
+    }, 0) / adequateDays.length * 10) / 10;
   });
   return result;
 }

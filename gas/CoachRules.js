@@ -1,9 +1,9 @@
 var COACH_PRIORITY = [
   'data_quality',
   'today_next_meal',
+  'macro_balance',
   'weight_trend',
   'energy_pattern',
-  'protein',
   'activity',
   'progress',
 ];
@@ -11,7 +11,7 @@ var COACH_FOCUS_TO_EVIDENCE = {
   logging: ['data_quality'],
   weight: ['weight_trend', 'progress'],
   energy: ['energy_pattern'],
-  macros: ['protein'],
+  macros: ['macro_balance'],
   activity: ['activity'],
 };
 var COACH_CONFIDENCE_RANK = { low: 0, medium: 1, high: 2 };
@@ -21,6 +21,10 @@ var COACH_MACROS = [
   { key: 'fat_g', label: '脂質', unit: 'g' },
   { key: 'carbs_g', label: '炭水化物', unit: 'g' },
 ];
+var COACH_NUTRITION_TARGETS = [
+  { key: 'calories_kcal', label: 'エネルギー', unit: 'kcal' },
+].concat(COACH_MACROS);
+var COACH_NUTRITION_DEVIATION_RATIO = 0.1;
 
 /*
  * CoachRules is intentionally a GAS/Node shared plain-JS module.
@@ -32,9 +36,9 @@ function buildCoachEvidence(scope, days, goals, today, focus) {
   var builders = {
     data_quality: buildCoachDataQualityEvidence,
     today_next_meal: buildCoachTodayNextMealEvidence,
+    macro_balance: buildCoachMacroBalanceEvidence,
     weight_trend: buildCoachWeightTrendEvidence,
     energy_pattern: buildCoachEnergyPatternEvidence,
-    protein: buildCoachProteinEvidence,
     activity: buildCoachActivityEvidence,
     progress: buildCoachProgressEvidence,
   };
@@ -53,6 +57,15 @@ function buildCoachActionCandidates(days, goals, today) {
   var context = createCoachContext('today', days, goals, today);
   var candidates = [];
   var targetDate = coachAddDays(context.date, 1);
+  var adequateDays = context.days.filter(function (day) { return day.coverage.adequate; });
+  var averageIntake = adequateDays.length >= 2 ? averageCoachNutrition(adequateDays) : null;
+  var periodDeviation = averageIntake ? findCoachLargestNutritionDeviation(averageIntake, context.goals) : null;
+  var todayDeviation = context.today.coverage.adequate
+    ? findCoachLargestNutritionDeviation(context.today.intake, context.goals)
+    : null;
+  var caloriesOverBudget = context.goals.calories_kcal !== null
+    && context.today.intake.calories_kcal !== null
+    && context.today.intake.calories_kcal > context.goals.calories_kcal;
 
   candidates.push({
     key: 'logging',
@@ -61,7 +74,7 @@ function buildCoachActionCandidates(days, goals, today) {
     target_date: targetDate,
   });
 
-  if (context.goals.calories_kcal !== null && context.today.intake.calories_kcal !== null) {
+  if (context.today.coverage.adequate && context.goals.calories_kcal !== null && context.today.intake.calories_kcal !== null) {
     var remainingCalories = context.goals.calories_kcal - context.today.intake.calories_kcal;
     if (remainingCalories > 0) {
       candidates.push({
@@ -70,25 +83,43 @@ function buildCoachActionCandidates(days, goals, today) {
         text: '次の一食を選ぶ前に残り' + coachRound(remainingCalories) + 'kcalを確認する',
         target_date: targetDate,
       });
+    } else if (remainingCalories < 0) {
+      candidates.push({
+        key: 'energy',
+        category: 'energy',
+        text: '次の一食では量や組み合わせを見直し、カロリー目標の超過を増やさない',
+        target_date: targetDate,
+      });
     }
   }
 
-  if (context.goals.protein_g !== null && context.today.intake.protein_g !== null
-    && context.today.intake.protein_g < context.goals.protein_g) {
+  var periodProteinDeficit = periodDeviation && periodDeviation.key === 'protein_g' && periodDeviation.direction === 'under';
+  var todayProteinDeficit = todayDeviation && todayDeviation.key === 'protein_g' && todayDeviation.direction === 'under';
+  if ((periodProteinDeficit || todayProteinDeficit) && !caloriesOverBudget && context.today.coverage.adequate) {
     candidates.push({
       key: 'protein',
       category: 'protein',
-      text: '次の一食にタンパク質源を1品追加する',
+      text: '次の一食ではタンパク質源を意識して選ぶ',
       target_date: targetDate,
     });
   }
 
-  var macroGap = findCoachLargestMacroGap(context.today.intake, context.goals);
-  if (macroGap !== null) {
+  if (periodDeviation) {
     candidates.push({
       key: 'macro_balance',
       category: 'macro_balance',
-      text: '次の一食で' + macroGap.label + 'を優先する',
+      text: buildCoachBalanceActionText(periodDeviation, caloriesOverBudget),
+      target_date: targetDate,
+    });
+  }
+
+  var proteinIsTodayActionable = todayDeviation && todayDeviation.key === 'protein_g'
+    && todayDeviation.direction === 'under' && !caloriesOverBudget;
+  if (todayDeviation && todayDeviation.key !== 'calories_kcal' && !proteinIsTodayActionable) {
+    candidates.push({
+      key: 'today_balance',
+      category: 'macro_balance',
+      text: buildCoachBalanceActionText(todayDeviation, caloriesOverBudget),
       target_date: targetDate,
     });
   }
@@ -116,7 +147,7 @@ function buildCoachCandidatePairs(evidenceSuggestions, actionCandidates) {
   });
 
   return (evidenceSuggestions || []).map(function (suggestion) {
-    var actionKey = actionKeyForCoachEvidence(suggestion.type, actionsByKey);
+    var actionKey = actionKeyForCoachEvidence(suggestion.type, actionsByKey, suggestion);
     var action = actionsByKey[actionKey];
     if (!suggestion || !action || !suggestion.evidence || suggestion.evidence.length === 0) {
       return null;
@@ -252,8 +283,8 @@ function coachFocusHasEnoughData(focus, context) {
     }).length >= 2;
   }
   if (focus === 'macros') {
-    return context.goals.protein_g !== null && context.goals.protein_g > 0
-      && context.days.filter(function (day) { return day.meal_count > 0; }).length >= 2;
+    return context.days.filter(function (day) { return day.coverage.adequate; }).length >= 2
+      && hasCoachNutritionGoals(context.goals);
   }
   if (focus === 'activity') {
     return getCoachRecentActivity(context.days).observedDays >= 5;
@@ -262,12 +293,21 @@ function coachFocusHasEnoughData(focus, context) {
 }
 
 function coachFocusNoEvidenceHeadline(focus, context) {
+  if (focus === 'macros' && coachFocusHasEnoughData(focus, context)) {
+    return 'PFCの目標バランスを維持できています';
+  }
   return coachFocusHasEnoughData(focus, context)
     ? coachFocusLabel(focus) + 'の追加案内はありません'
     : coachFocusLabel(focus) + 'のデータが不足しています';
 }
 
 function coachFocusNoEvidenceSummary(focus, context) {
+  if (focus === 'macros' && coachFocusHasEnoughData(focus, context)) {
+    return '十分に記録できた日の平均は目標内です。無理に追加せず、今のペースを維持しましょう。';
+  }
+  if (focus === 'macros') {
+    return '主要な食事を2つ以上記録した日が増えるまで、PFCとエネルギーの判断を保留します。';
+  }
   return coachFocusHasEnoughData(focus, context)
     ? 'この期間はこの観点で追加の行動案内がありません。記録の傾向をそのまま確認できます。'
     : 'この観点を分析するには、もう少し記録が必要です。';
@@ -358,47 +398,50 @@ function buildCoachDataQualityEvidence(context) {
 }
 
 function buildCoachTodayNextMealEvidence(context) {
-  var intake = context.today.intake;
-  var gaps = [];
-  COACH_MACROS.forEach(function (macro) {
-    var goal = context.goals[macro.key];
-    var value = intake[macro.key];
-    if (goal !== null && value !== null && goal > 0 && value < goal) {
-      gaps.push({
-        key: macro.key,
-        label: macro.label,
-        unit: macro.unit,
-        remaining: goal - value,
-        ratio: value / goal,
-      });
-    }
-  });
-
-  if (gaps.length === 0 && context.goals.calories_kcal !== null
-    && intake.calories_kcal !== null && intake.calories_kcal < context.goals.calories_kcal) {
-    gaps.push({
-      key: 'calories_kcal',
-      label: 'エネルギー',
-      unit: 'kcal',
-      remaining: context.goals.calories_kcal - intake.calories_kcal,
-      ratio: intake.calories_kcal / context.goals.calories_kcal,
-    });
-  }
-  if (gaps.length === 0) {
+  if (!context.today.coverage.adequate || !hasCoachNutritionGoals(context.goals)) {
     return null;
   }
 
-  gaps.sort(function (left, right) { return left.ratio - right.ratio; });
-  var gap = gaps[0];
+  var intake = context.today.intake;
+  var deviation = findCoachLargestNutritionDeviation(intake, context.goals);
+  if (!deviation) {
+    return null;
+  }
+
   return coachSuggestion('today_next_meal', [{
-    key: 'today_next_meal',
-    label: '次の一食で優先する栄養素',
-    value: coachRound(gap.remaining),
-    unit: gap.unit,
-    comparison_value: context.goals[gap.key],
-    comparison_label: gap.label + 'の目標',
+    key: deviation.key,
+    label: '今日の' + deviation.label + (deviation.direction === 'over' ? 'の超過' : 'の不足'),
+    value: coachRound(deviation.value),
+    unit: deviation.unit,
+    comparison_value: coachRound(deviation.goal),
+    comparison_label: deviation.label + 'の1日目標',
     period_start: context.today.date,
     period_end: context.today.date,
+    confidence: context.confidence.nutrition,
+  }], context.confidence.nutrition);
+}
+
+function buildCoachMacroBalanceEvidence(context) {
+  var adequateDays = context.days.filter(function (day) { return day.coverage.adequate; });
+  if (adequateDays.length < 2 || !hasCoachNutritionGoals(context.goals)) {
+    return null;
+  }
+
+  var averageIntake = averageCoachNutrition(adequateDays);
+  var deviation = findCoachLargestNutritionDeviation(averageIntake, context.goals);
+  if (!deviation) {
+    return null;
+  }
+
+  return coachSuggestion('macro_balance', [{
+    key: deviation.key,
+    label: '十分な記録日の平均' + deviation.label,
+    value: coachRound(deviation.value),
+    unit: deviation.unit,
+    comparison_value: coachRound(deviation.goal),
+    comparison_label: deviation.label + 'の1日目標',
+    period_start: adequateDays[0].date,
+    period_end: adequateDays[adequateDays.length - 1].date,
     confidence: context.confidence.nutrition,
   }], context.confidence.nutrition);
 }
@@ -449,31 +492,6 @@ function buildCoachEnergyPatternEvidence(context) {
     period_end: adequate[adequate.length - 1].date,
     confidence: confidence,
   }], confidence);
-}
-
-function buildCoachProteinEvidence(context) {
-  if (context.goals.protein_g === null || context.goals.protein_g <= 0) {
-    return null;
-  }
-  var logged = context.days.filter(function (day) { return day.meal_count > 0; });
-  var deficient = logged.filter(function (day) {
-    return day.intake.protein_g < context.goals.protein_g * 0.9;
-  });
-  if (logged.length < 2 || deficient.length < 2 || deficient.length < Math.ceil(logged.length / 2)) {
-    return null;
-  }
-  var averageProtein = coachAverage(logged.map(function (day) { return day.intake.protein_g; }));
-  return coachSuggestion('protein', [{
-    key: 'protein',
-    label: '平均タンパク質摂取量',
-    value: coachRound(averageProtein),
-    unit: 'g',
-    comparison_value: coachRound(context.goals.protein_g),
-    comparison_label: '1日のタンパク質目標',
-    period_start: logged[0].date,
-    period_end: logged[logged.length - 1].date,
-    confidence: context.confidence.nutrition,
-  }], context.confidence.nutrition);
 }
 
 function buildCoachActivityEvidence(context) {
@@ -528,28 +546,95 @@ function coachSuggestion(type, evidence, confidence) {
   return { type: type, evidence: evidence, confidence: confidence };
 }
 
-function actionKeyForCoachEvidence(type, actionsByKey) {
+function actionKeyForCoachEvidence(type, actionsByKey, suggestion) {
   if (type === 'data_quality') return 'logging';
-  if (type === 'today_next_meal') return actionsByKey.macro_balance ? 'macro_balance' : 'energy';
+  if (type === 'today_next_meal') {
+    var evidence = suggestion && suggestion.evidence && suggestion.evidence[0];
+    if (evidence && evidence.key === 'protein_g' && evidence.value < evidence.comparison_value && actionsByKey.protein) {
+      return 'protein';
+    }
+    if (evidence && evidence.key === 'calories_kcal' && actionsByKey.energy) {
+      return 'energy';
+    }
+    if (actionsByKey.today_balance) return 'today_balance';
+    if (actionsByKey.macro_balance) return 'macro_balance';
+    return actionsByKey.energy ? 'energy' : null;
+  }
+  if (type === 'macro_balance') return 'macro_balance';
   if (type === 'weight_trend') return 'activity';
   if (type === 'energy_pattern') return 'energy';
-  if (type === 'protein') return 'protein';
   if (type === 'activity') return 'activity';
   if (type === 'progress') return 'logging';
   return null;
 }
 
-function findCoachLargestMacroGap(intake, goals) {
-  var gaps = COACH_MACROS.map(function (macro) {
-    var goal = goals[macro.key];
-    var value = intake[macro.key];
-    return goal !== null && value !== null && goal > 0 && value < goal
-      ? { label: macro.label, remaining: goal - value, ratio: value / goal }
-      : null;
-  }).filter(function (gap) { return gap !== null; });
-  if (gaps.length === 0) return null;
-  gaps.sort(function (left, right) { return left.ratio - right.ratio; });
-  return gaps[0];
+function averageCoachNutrition(days) {
+  var average = {};
+  COACH_NUTRITION_TARGETS.forEach(function (target) {
+    var values = days.map(function (day) { return day.intake[target.key]; }).filter(function (value) {
+      return value !== null;
+    });
+    average[target.key] = values.length >= 2 ? coachAverage(values) : null;
+  });
+  return average;
+}
+
+function hasCoachNutritionGoals(goals) {
+  return COACH_NUTRITION_TARGETS.every(function (target) {
+    return goals[target.key] !== null && goals[target.key] > 0;
+  });
+}
+
+function findCoachLargestNutritionDeviation(intake, goals) {
+  var deviations = COACH_NUTRITION_TARGETS.map(function (target) {
+    var goal = goals[target.key];
+    var value = intake[target.key];
+    if (goal === null || goal <= 0 || value === null) {
+      return null;
+    }
+    var ratio = value / goal;
+    if (ratio >= 1 - COACH_NUTRITION_DEVIATION_RATIO && ratio <= 1 + COACH_NUTRITION_DEVIATION_RATIO) {
+      return null;
+    }
+    return {
+      key: target.key,
+      label: target.label,
+      unit: target.unit,
+      value: value,
+      goal: goal,
+      direction: ratio > 1 ? 'over' : 'under',
+      deviation_ratio: ratio - 1,
+    };
+  }).filter(function (deviation) { return deviation !== null; });
+  if (deviations.length === 0) return null;
+  deviations.sort(function (left, right) {
+    return Math.abs(right.deviation_ratio) - Math.abs(left.deviation_ratio);
+  });
+  return deviations[0];
+}
+
+function buildCoachBalanceActionText(deviation, caloriesOverBudget) {
+  if (caloriesOverBudget) {
+    if (deviation.key === 'protein_g' && deviation.direction === 'under') {
+      return 'タンパク質を意識する場合も食事を追加せず、低脂質な食材への置き換えを検討する';
+    }
+    return '今日のカロリー超過を踏まえ、次の一食は量や組み合わせを見直す';
+  }
+  if (deviation.key === 'calories_kcal') {
+    return deviation.direction === 'over'
+      ? '摂取カロリーの目標超過を増やさないよう量や組み合わせを見直す'
+      : '次の一食では残りのエネルギーを踏まえて配分する';
+  }
+  if (deviation.key === 'fat_g' && deviation.direction === 'over') {
+    return '脂質の多い食材を低脂質なものへ置き換える';
+  }
+  if (deviation.key === 'carbs_g' && deviation.direction === 'over') {
+    return '炭水化物の量や主食の組み合わせを見直す';
+  }
+  if (deviation.key === 'protein_g' && deviation.direction === 'under') {
+    return '次の一食ではタンパク質源を意識して選ぶ';
+  }
+  return '十分な記録日の平均を踏まえ、' + deviation.label + 'の量や組み合わせを調整する';
 }
 
 function getCoachRecentActivity(days) {
@@ -614,9 +699,9 @@ function coachHeadline(type) {
   var headlines = {
     data_quality: 'まずは記録の抜けを減らす',
     today_next_meal: '次の一食は不足分を優先する',
+    macro_balance: 'PFCとエネルギーの偏りを整える',
     weight_trend: '体重の変化をゆるやかに確認する',
     energy_pattern: '摂取と消費の傾向を確認する',
-    protein: 'タンパク質を補う機会をつくる',
     activity: 'いつもの歩数を少し伸ばす',
     progress: '目標に近づいた行動を続ける',
   };
@@ -627,9 +712,9 @@ function coachSummary(type) {
   var summaries = {
     data_quality: '主な食事の記録がそろうと、より確かな案内ができます。',
     today_next_meal: '次の一食では、今日まだ足りない栄養素を意識してみましょう。',
+    macro_balance: '十分に記録できた日のPFCとエネルギーの差をもとに、偏りを調整します。',
     weight_trend: '体重の変化は、栄養と活動の記録と合わせて傾向として見守ります。',
     energy_pattern: '記録が十分な日の摂取と消費の傾向を確認できます。',
-    protein: '継続して不足している栄養素を、次の一食で補いましょう。',
     activity: '最近の歩数を基準に、無理のない範囲で少し伸ばします。',
     progress: '目標に近づいた変化を、続けられた行動として承認します。',
   };

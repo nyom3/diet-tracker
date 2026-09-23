@@ -71,6 +71,62 @@ function createContext({ pairs = [pairOne, pairTwo], aiResult = { ok: false, rea
   };
 }
 
+test('AIプロンプトは候補keyの意味を示し、記録十分日のみ平均し、途中日の栄養値は伏せる', () => {
+  const context = { module: { exports: {} } };
+  vm.runInNewContext(dashboardSource, context);
+  vm.runInNewContext(coachSource, context);
+  vm.runInNewContext(codeSource, context);
+  context.Utilities = { formatDate: (date) => date.toISOString().slice(0, 10) };
+  context.Session = { getScriptTimeZone: () => 'Asia/Tokyo' };
+  const makePromptDay = (date, adequate, intake) => ({
+    date,
+    meal_count: adequate ? 2 : 1,
+    coverage: { ratio: adequate ? 2 / 3 : 1 / 3, adequate },
+    intake: { calories_kcal: intake[0], protein_g: intake[1], fat_g: intake[2], carbs_g: intake[3] },
+    steps: null,
+    weight_trend_kg: null,
+  });
+  const dashboardContext = {
+    dashboard: {
+      window_start: '2026-07-09',
+      window_end: '2026-07-11',
+      goals: { calories_kcal: 2000, protein_g: 100, fat_g: 70, carbs_g: 250 },
+      days: [
+        makePromptDay('2026-07-09', false, [500, 10, 10, 50]),
+        makePromptDay('2026-07-10', true, [1800, 80, 60, 220]),
+        makePromptDay('2026-07-11', true, [2000, 100, 70, 250]),
+      ],
+      confidence: { nutrition: 'medium', weight: 'low', activity: 'low' },
+      summary: {},
+    },
+    meals: [{ timestamp: '2026-07-11T12:00:00+09:00', meal_type: '昼', description: '昼食' }],
+  };
+  const incompleteToday = makePromptDay('2026-07-11', false, [500, 10, 10, 50]);
+  const candidatePairs = [{
+    evidence_key: 'fat_g',
+    action_key: 'today_balance',
+    action: { key: 'today_balance', text: '脂質の多い食材を低脂質なものへ置き換える' },
+    evidence: [{ key: 'fat_g', value: 65, comparison_value: 70 }],
+  }];
+
+  const trendPrompt = context.buildCoachAiPrompt('trend', dashboardContext, incompleteToday, candidatePairs, 'macros');
+  const trendPayload = JSON.parse(trendPrompt.slice(trendPrompt.lastIndexOf('\n') + 1));
+  assert.equal(trendPayload.averages.calories_kcal, 1900);
+  assert.equal(trendPayload.averages.protein_g, 90);
+  assert.equal(trendPayload.goal_gaps.protein_g, -10);
+  assert.equal(trendPayload.candidates[0].action_key, 'today_balance');
+  assert.equal(Object.hasOwn(trendPayload.candidates[0], 'action_text'), false);
+  assert.match(trendPrompt, /today_balance=今日のPFC差に沿った置き換えや配分調整/);
+
+  const todayPrompt = context.buildCoachAiPrompt('today', dashboardContext, incompleteToday, candidatePairs, null);
+  const todayPayload = JSON.parse(todayPrompt.slice(todayPrompt.lastIndexOf('\n') + 1));
+  assert.equal(todayPayload.averages.calories_kcal, null);
+  assert.equal(todayPayload.averages.protein_g, null);
+  assert.equal(todayPayload.goal_gaps.protein_g, null);
+  assert.equal(todayPayload.summary.average_protein_g, null);
+  assert.match(todayPrompt, /記録が不十分な場合は不足を断定せず判断を保留/);
+});
+
 test('候補0件ではAIを呼ばず、ルール結果を返す', () => {
   const { context, getAiCalls } = createContext({ pairs: [] });
   const result = context.generateCoachInsight({ scope: 'trend', range_days: 30 });

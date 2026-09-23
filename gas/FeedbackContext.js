@@ -62,6 +62,7 @@ function buildTodayFeedbackContext(meals, goals, evaluationTime) {
     var normalizedTarget = feedbackNumber(targetValue);
     return key + ': 合計 ' + feedbackRound(total[key]) + ' / 目標 ' + normalizedTarget + ' / 差分 ' + feedbackRound(normalizedTarget - total[key]);
   });
+  var calorieGoal = safeGoals.calories_kcal;
 
   return {
     evaluation_time: String(evaluationTime || ''),
@@ -72,13 +73,22 @@ function buildTodayFeedbackContext(meals, goals, evaluationTime) {
     target_lines: targetLines,
     meal_lines: mealLines,
     is_main_meals_complete: mainMealTypes.length === FEEDBACK_MAIN_MEALS.length,
+    is_calories_over_goal: calorieGoal != null && total.calories_kcal > feedbackNumber(calorieGoal),
   };
 }
 
 function buildTodayFeedbackPrompt(context) {
   var outputGuidance = context.is_main_meals_complete
     ? '朝・昼・夜がそろっているため、今日の締めの講評と明日への一手を主に書いてください。'
-    : '朝・昼・夜のうち未記録の食事があるため、目標との差分（残り予算）を踏まえた次の一食の配分を主に書いてください。';
+    : context.main_meal_count < 2
+      ? '主要な食事が2食未満のため、未記録の食事がある前提で慎重にコメントしてください。'
+      : '朝・昼・夜のうち未記録の食事があるため、目標との差分（残り予算）を踏まえた次の一食の配分を主に書いてください。';
+  var evidenceGuidance = context.main_meal_count < 2
+    ? '記録が十分でないため、栄養素の不足や継続的な傾向を断定せず、判断を保留してください。'
+    : '';
+  var energyGuidance = context.is_calories_over_goal
+    ? 'カロリー目標を超過している場合は食事の追加を勧めず、置き換えや分量・配分の調整を提案してください。'
+    : '';
   var total = context.total;
 
   return (
@@ -86,6 +96,8 @@ function buildTodayFeedbackPrompt(context) {
     'できている点を先に1つ挙げてから改善点に触れてください。記録を続けていること自体を評価しても構いません。\n' +
     '評価時点までの今日の食事だけを対象に、日本語で3文以内にまとめてください。\n' +
     outputGuidance + '\n' +
+    (evidenceGuidance ? evidenceGuidance + '\n' : '') +
+    (energyGuidance ? energyGuidance + '\n' : '') +
     '断定しすぎず、医療助言ではなく一般的な食事コメントとして書いてください。\n\n' +
     '評価時点: ' + context.evaluation_time + '\n' +
     '記録済み食事タイプ: ' + (context.meal_types.length ? context.meal_types.join('、') : 'なし') + '\n' +
