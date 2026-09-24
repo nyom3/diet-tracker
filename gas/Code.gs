@@ -605,6 +605,9 @@ function generateCoachInsight(request) {
         provider: aiResult.provider,
         request_kind: 'coach-json',
         reason: 'coach_response_rejected:' + (validationContext.reject_reason || 'unknown'),
+        diagnostics: validationContext.numeric_mismatches && validationContext.numeric_mismatches.length > 0
+          ? 'numeric_mismatch=' + validationContext.numeric_mismatches.join(',')
+          : undefined,
       },
     );
   }
@@ -737,7 +740,7 @@ function buildCoachAiPrompt(scope, context, today, candidatePairs, focus) {
   return 'あなたは食事記録アプリの安全なコーチです。入力JSONに含まれる候補だけを選び、医療診断や目標変更をせずに回答してください。' +
     '行動キーの意味は、logging=記録、energy=エネルギー差に沿った配分、protein=カロリーに余裕がある場合のタンパク質、macro_balance=期間平均のPFC調整、today_balance=今日のPFC差に沿った置き換えや配分調整、activity=歩数です。' +
     '栄養に関する説明は候補のevidenceだけを根拠にし、記録が不十分な場合は不足を断定せず判断を保留してください。' +
-    '見出しは40文字以内、説明は160文字以内です。説明に数字を書く場合は、選択した候補のevidenceにあるvalueまたはcomparison_valueと同じ値を、そのままの桁で引用してください。数字に桁区切りのカンマは使わず、期間の日付は説明に書かないでください。' +
+    '見出しは40文字以内、説明は160文字以内です。説明に数字を書く場合は、選択した候補のevidenceにあるvalueまたはcomparison_valueと同じ値を、そのままの桁で引用してください。実績と目標、摂取と消費の差を書く場合は、valueとcomparison_valueの差を同じ桁で書いてください。数字に桁区切りのカンマは使わず、期間の日付は説明に書かないでください。' +
     'JSONのみで返し、action_keyとevidence_keyは同じ候補ペアから選んでください。' +
     'headline、summary、evidence_key、action_key以外のキーは返さないでください。\n' +
     JSON.stringify(payload);

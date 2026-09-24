@@ -117,6 +117,7 @@ test('AIプロンプトは候補keyの意味を示し、記録十分日のみ平
   assert.equal(trendPayload.candidates[0].action_key, 'today_balance');
   assert.equal(Object.hasOwn(trendPayload.candidates[0], 'action_text'), false);
   assert.match(trendPrompt, /today_balance=今日のPFC差に沿った置き換えや配分調整/);
+  assert.match(trendPrompt, /valueとcomparison_valueの差を同じ桁で書いてください/);
 
   const todayPrompt = context.buildCoachAiPrompt('today', dashboardContext, incompleteToday, candidatePairs, null);
   const todayPayload = JSON.parse(todayPrompt.slice(todayPrompt.lastIndexOf('\n') + 1));
@@ -169,6 +170,38 @@ test('AI不正応答は優先度1位のルール結果へ戻しfallback_notice�
   assert.equal(result.selected_action, pairOne.action);
   assert.match(result.fallback_notice, /AIの応答を確認できないため/);
   assert.match(result.fallback_notice, /Geminiへfallback/);
+});
+
+test('数字不一致で棄却した場合は数値だけをdiagnosticsへ記録する', () => {
+  const proteinPair = {
+    ...pairOne,
+    evidence: [{ ...pairOne.evidence[0], value: 82, comparison_value: 70, unit: 'g' }],
+  };
+  const { context } = createContext({
+    pairs: [proteinPair],
+    aiResult: {
+      ok: true,
+      text: JSON.stringify({
+        headline: '目標との差を確認する',
+        summary: 'タンパク質は目標より17g多いです。',
+        evidence_key: proteinPair.evidence_key,
+        action_key: proteinPair.action_key,
+      }),
+      fallback_notice: '',
+      provider: 'gemini',
+    },
+  });
+  const logs = [];
+  context.recordAiCallLog = (entry) => logs.push(entry);
+
+  const result = context.generateCoachInsight({ scope: 'trend', range_days: 30 });
+
+  assert.equal(result.source, 'rules');
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].stage, 'coach_response_rejected');
+  assert.equal(logs[0].reason, 'coach_response_rejected:summary_empty_or_numeric');
+  assert.equal(logs[0].diagnostics, 'numeric_mismatch=17');
+  assert.equal(JSON.stringify(logs).includes('目標より17g多い'), false);
 });
 
 test('AI呼び出し失敗は例外にせずルール結果へ戻す', () => {
