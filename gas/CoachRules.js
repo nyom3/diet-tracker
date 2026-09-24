@@ -25,6 +25,13 @@ var COACH_NUTRITION_TARGETS = [
   { key: 'calories_kcal', label: 'エネルギー', unit: 'kcal' },
 ].concat(COACH_MACROS);
 var COACH_NUTRITION_DEVIATION_RATIO = 0.1;
+var COACH_DIFFERENCE_EVIDENCE_UNITS = {
+  calories_kcal: 'kcal',
+  protein_g: 'g',
+  fat_g: 'g',
+  carbs_g: 'g',
+  energy_pattern: 'kcal',
+};
 
 /*
  * CoachRules is intentionally a GAS/Node shared plain-JS module.
@@ -212,11 +219,21 @@ function validateCoachAiResponse(candidates, aiResponse, outContext) {
         values.push(Math.abs(value));
       }
     });
+    var expectedUnit = evidence && COACH_DIFFERENCE_EVIDENCE_UNITS[evidence.key];
+    if (expectedUnit && evidence.unit === expectedUnit
+      && typeof evidence.value === 'number' && isFinite(evidence.value)
+      && typeof evidence.comparison_value === 'number' && isFinite(evidence.comparison_value)) {
+      values.push(coachRound(Math.abs(evidence.value - evidence.comparison_value)));
+    }
     return values;
   }, []);
-  if (summaryNumbers.some(function (value) {
+  var numericMismatches = summaryNumbers.filter(function (value) {
     return allowedNumbers.indexOf(Math.abs(value)) === -1;
-  })) {
+  });
+  if (numericMismatches.length > 0) {
+    if (outContext && typeof outContext === 'object') {
+      outContext.numeric_mismatches = numericMismatches;
+    }
     return rejectCoachAiResponse(outContext, 'summary_empty_or_numeric');
   }
 

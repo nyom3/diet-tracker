@@ -335,6 +335,60 @@ test('AI説明は選択候補のevidence値だけを絶対値で引用できる'
   assert.deepEqual(JSON.parse(JSON.stringify(coach.validateCoachAiResponse(energyCandidate, energyResponse))), energyResponse);
 });
 
+test('栄養・エネルギーevidenceでは同単位の値の差を許可し、weight_trendなどには加えない', () => {
+  const macroCandidate = [{
+    evidence_key: 'protein_g',
+    action_key: 'protein',
+    evidence: [{ key: 'protein_g', value: 82.13, comparison_value: 70.12, unit: 'g' }],
+  }];
+  const macroResponse = {
+    headline: '目標との差を確認する',
+    summary: 'タンパク質は目標より12.01g多いです。',
+    evidence_key: 'protein_g',
+    action_key: 'protein',
+  };
+  assert.deepEqual(JSON.parse(JSON.stringify(coach.validateCoachAiResponse(macroCandidate, macroResponse))), macroResponse);
+  assert.equal(coach.validateCoachAiResponse(macroCandidate, { ...macroResponse, summary: 'タンパク質は目標より12g多いです。' }), null);
+  const exactMacroCandidate = [{
+    evidence_key: 'protein_g',
+    action_key: 'protein',
+    evidence: [{ key: 'protein_g', value: 82, comparison_value: 70, unit: 'g' }],
+  }];
+  assert.ok(coach.validateCoachAiResponse(exactMacroCandidate, {
+    ...macroResponse,
+    summary: 'タンパク質は目標より12g多いです。',
+  }));
+
+  const energyCandidate = [{
+    evidence_key: 'energy_pattern',
+    action_key: 'energy',
+    evidence: [{ key: 'energy_pattern', value: 1850, comparison_value: 2100, unit: 'kcal' }],
+  }];
+  const energyResponse = {
+    headline: '摂取と消費の差を見る',
+    summary: '摂取と消費の差は250kcalです。',
+    evidence_key: 'energy_pattern',
+    action_key: 'energy',
+  };
+  assert.deepEqual(JSON.parse(JSON.stringify(coach.validateCoachAiResponse(energyCandidate, energyResponse))), energyResponse);
+
+  const weightCandidate = [{
+    evidence_key: 'weight_trend',
+    action_key: 'activity',
+    evidence: [{ key: 'weight_trend', value: -1.2, comparison_value: 70, unit: 'kg' }],
+  }];
+  const weightResponse = {
+    headline: '体重の傾向を見る',
+    summary: '体重は1.2kg減り、開始時は70kgでした。差は71.2kgです。',
+    evidence_key: 'weight_trend',
+    action_key: 'activity',
+  };
+  const rejection = {};
+  assert.equal(coach.validateCoachAiResponse(weightCandidate, weightResponse, rejection), null);
+  assert.equal(rejection.reject_reason, 'summary_empty_or_numeric');
+  assert.deepEqual(JSON.parse(JSON.stringify(rejection.numeric_mismatches)), [71.2]);
+});
+
 test('buildCoachInsightはrules由来の主候補と代替候補を返す', () => {
   const days = makeDays();
   const insight = coach.buildCoachInsight('trend', days, goals, days.at(-1));
