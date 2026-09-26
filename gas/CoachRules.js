@@ -214,10 +214,18 @@ function validateCoachAiResponse(candidates, aiResponse, outContext) {
   }
   var summaryNumbers = extractCoachSummaryNumbers(aiResponse.summary);
   var allowedNumbers = (matchingCandidate.evidence || []).reduce(function (values, evidence) {
+    if (!evidence || typeof evidence !== 'object') {
+      return values;
+    }
     [evidence.value, evidence.comparison_value].forEach(function (value) {
       if (typeof value === 'number' && isFinite(value)) {
         values.push(Math.abs(value));
       }
+    });
+    [evidence.label, evidence.comparison_label].forEach(function (label) {
+      extractCoachSummaryNumbers(label).forEach(function (value) {
+        values.push(Math.abs(value));
+      });
     });
     var expectedUnit = evidence && COACH_DIFFERENCE_EVIDENCE_UNITS[evidence.key];
     if (expectedUnit && evidence.unit === expectedUnit
@@ -227,6 +235,9 @@ function validateCoachAiResponse(candidates, aiResponse, outContext) {
     }
     return values;
   }, []);
+  extractCoachSummaryNumbers(matchingCandidate.action && matchingCandidate.action.text).forEach(function (value) {
+    allowedNumbers.push(Math.abs(value));
+  });
   var numericMismatches = summaryNumbers.filter(function (value) {
     return allowedNumbers.indexOf(Math.abs(value)) === -1;
   });

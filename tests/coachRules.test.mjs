@@ -389,6 +389,80 @@ test('栄養・エネルギーevidenceでは同単位の値の差を許可し、
   assert.deepEqual(JSON.parse(JSON.stringify(rejection.numeric_mismatches)), [71.2]);
 });
 
+test('AI説明は選択候補のevidenceと行動文にある数字だけを許可する', () => {
+  const targetCandidate = {
+    evidence_key: 'protein_g',
+    action_key: 'protein',
+    evidence: [{
+      key: 'protein_g',
+      label: 'タンパク質',
+      value: 18,
+      unit: 'g',
+      comparison_value: 70,
+      comparison_label: 'タンパク質の1日目標',
+    }],
+    action: { key: 'protein', text: '明日は朝・昼・夜のうち2食以上を記録する' },
+  };
+  const otherCandidate = {
+    evidence_key: 'other',
+    action_key: 'other',
+    evidence: [{ key: 'other', label: '4回の記録', value: 5, comparison_value: 6 }],
+    action: { key: 'other', text: '明日は4回を目安にする' },
+  };
+  const targetResponse = {
+    headline: '目標を意識する',
+    summary: 'タンパク質の1日目標を踏まえ、明日は2食以上を記録しましょう。',
+    evidence_key: 'protein_g',
+    action_key: 'protein',
+  };
+
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(coach.validateCoachAiResponse([targetCandidate, otherCandidate], targetResponse))),
+    targetResponse,
+    'comparison_labelの「1日目標」と選択したaction.textの「2食以上」を引用できる',
+  );
+
+  const evidenceLabelCandidate = [{
+    evidence_key: 'weight_trend',
+    action_key: 'activity',
+    evidence: [{ key: 'weight_trend', label: '2日間の変化', value: -1.2, comparison_value: 70 }],
+  }];
+  const evidenceLabelResponse = {
+    headline: '記録を確認する',
+    summary: '2日間の変化を確認しましょう。',
+    evidence_key: 'weight_trend',
+    action_key: 'activity',
+  };
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(coach.validateCoachAiResponse(evidenceLabelCandidate, evidenceLabelResponse))),
+    evidenceLabelResponse,
+    'actionが無い候補でもevidence.labelの数字を確認できる',
+  );
+
+  const noNumberCandidate = [{
+    evidence_key: 'protein_g',
+    action_key: 'protein',
+    evidence: [{ key: 'protein_g', label: 'タンパク質', value: 75, comparison_value: 70, comparison_label: '摂取量' }],
+    action: { key: 'protein', text: 'タンパク質を意識する' },
+  }];
+  const noNumberResponse = {
+    headline: '記録を確認する',
+    summary: '1日を目安にしましょう。',
+    evidence_key: 'protein_g',
+    action_key: 'protein',
+  };
+  const labelMismatch = {};
+  assert.equal(coach.validateCoachAiResponse(noNumberCandidate, noNumberResponse, labelMismatch), null);
+  assert.equal(labelMismatch.reject_reason, 'summary_empty_or_numeric');
+  assert.deepEqual(JSON.parse(JSON.stringify(labelMismatch.numeric_mismatches)), [1]);
+
+  const unselectedResponse = { ...targetResponse, summary: '4回を目安にしましょう。' };
+  const unselectedMismatch = {};
+  assert.equal(coach.validateCoachAiResponse([targetCandidate, otherCandidate], unselectedResponse, unselectedMismatch), null);
+  assert.equal(unselectedMismatch.reject_reason, 'summary_empty_or_numeric');
+  assert.deepEqual(JSON.parse(JSON.stringify(unselectedMismatch.numeric_mismatches)), [4]);
+});
+
 test('buildCoachInsightはrules由来の主候補と代替候補を返す', () => {
   const days = makeDays();
   const insight = coach.buildCoachInsight('trend', days, goals, days.at(-1));
