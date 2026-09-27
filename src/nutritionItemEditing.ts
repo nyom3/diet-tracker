@@ -4,6 +4,11 @@ export type NutritionSnapshot = {
   items: Array<Pick<NutritionItem, 'name' | 'quantity_text' | 'calories_kcal' | 'protein_g' | 'fat_g' | 'carbs_g'>>;
 };
 
+export type NutritionItemEditState = NutritionItem & {
+  baseValues: NutritionItem;
+  scaleFactor: number;
+};
+
 const scalableNutritionKeys: readonly NutritionKey[] = [
   'calories_kcal',
   'protein_g',
@@ -12,15 +17,46 @@ const scalableNutritionKeys: readonly NutritionKey[] = [
 ];
 
 export function updateNutritionItemValue(
+  item: NutritionItemEditState,
+  key: NutritionKey,
+  value: number,
+): NutritionItemEditState;
+export function updateNutritionItemValue(
+  item: NutritionItem,
+  key: NutritionKey,
+  value: number,
+): NutritionItem;
+export function updateNutritionItemValue(
   item: NutritionItem,
   key: NutritionKey,
   value: number,
 ): NutritionItem {
-  return { ...item, [key]: value };
+  const nextItem = normalizeNutritionItem({ ...item, [key]: value });
+  return isNutritionItemEditState(item) ? createNutritionItemEditState(nextItem) : nextItem;
 }
 
+export function updateNutritionItemQuantity(item: NutritionItemEditState, quantityText: string): NutritionItemEditState;
+export function updateNutritionItemQuantity(item: NutritionItem, quantityText: string): NutritionItem;
 export function updateNutritionItemQuantity(item: NutritionItem, quantityText: string): NutritionItem {
-  return { ...item, quantity_text: quantityText };
+  const nextItem = { ...getDisplayedNutritionItem(item), quantity_text: quantityText };
+  if (!isNutritionItemEditState(item)) return nextItem;
+  return {
+    ...nextItem,
+    baseValues: { ...item.baseValues, quantity_text: quantityText },
+    scaleFactor: item.scaleFactor,
+  } as NutritionItemEditState;
+}
+
+export function updateNutritionItemName(item: NutritionItemEditState, name: string): NutritionItemEditState;
+export function updateNutritionItemName(item: NutritionItem, name: string): NutritionItem;
+export function updateNutritionItemName(item: NutritionItem, name: string): NutritionItem {
+  const nextItem = { ...getDisplayedNutritionItem(item), name };
+  if (!isNutritionItemEditState(item)) return nextItem;
+  return {
+    ...nextItem,
+    baseValues: { ...item.baseValues, name },
+    scaleFactor: item.scaleFactor,
+  } as NutritionItemEditState;
 }
 
 export function normalizeNutritionNumber(value: unknown): number {
@@ -34,10 +70,10 @@ export function normalizeNutritionItem(item: Partial<NutritionItem>): NutritionI
     // Keep the server-side truncation visible before saving, so reloads do not change the display.
     quantity_text: String(item.quantity_text || '').trim(),
     basis: String(item.basis || '').trim().slice(0, 40),
-    calories_kcal: normalizeNutritionNumber(item.calories_kcal),
-    protein_g: normalizeNutritionNumber(item.protein_g),
-    fat_g: normalizeNutritionNumber(item.fat_g),
-    carbs_g: normalizeNutritionNumber(item.carbs_g),
+    calories_kcal: Math.round(normalizeNutritionNumber(item.calories_kcal)),
+    protein_g: roundToTenth(normalizeNutritionNumber(item.protein_g)),
+    fat_g: roundToTenth(normalizeNutritionNumber(item.fat_g)),
+    carbs_g: roundToTenth(normalizeNutritionNumber(item.carbs_g)),
   };
 }
 
@@ -55,14 +91,17 @@ export function calculateNutritionTotal(items: NutritionItem[]): NutritionTotal 
 
 export function createNutritionSnapshot(items: NutritionItem[]): NutritionSnapshot {
   return {
-    items: items.map(({ name, quantity_text, calories_kcal, protein_g, fat_g, carbs_g }) => ({
-      name,
-      quantity_text,
-      calories_kcal,
-      protein_g,
-      fat_g,
-      carbs_g,
-    })),
+    items: items.map((item) => {
+      const displayedItem = getDisplayedNutritionItem(item);
+      return {
+        name: displayedItem.name,
+        quantity_text: displayedItem.quantity_text,
+        calories_kcal: displayedItem.calories_kcal,
+        protein_g: displayedItem.protein_g,
+        fat_g: displayedItem.fat_g,
+        carbs_g: displayedItem.carbs_g,
+      };
+    }),
   };
 }
 
@@ -86,7 +125,7 @@ export function resolveMealSource(
 }
 
 export function serializeNutritionItems(items: NutritionItem[]): string {
-  return JSON.stringify(items);
+  return JSON.stringify(items.map(getDisplayedNutritionItem));
 }
 
 export function parseNutritionItems(breakdownJson: string): NutritionItem[] {
@@ -104,9 +143,12 @@ export function scaleNutritionItem(item: NutritionItem, multiplier: number): Nut
     throw new RangeError('栄養値の倍率は0より大きい有限値で指定してください。');
   }
 
-  const nextItem = { ...item };
+  const baseItem = normalizeNutritionItem(item);
+  const nextItem = { ...baseItem };
   scalableNutritionKeys.forEach((key) => {
-    nextItem[key] = roundToTenth(item[key] * multiplier);
+    nextItem[key] = key === 'calories_kcal'
+      ? Math.round(baseItem[key] * multiplier)
+      : roundToTenth(baseItem[key] * multiplier);
   });
   return nextItem;
 }
@@ -119,6 +161,59 @@ export function scaleNutritionItemAt(
   return items.map((item, itemIndex) => (
     itemIndex === index ? scaleNutritionItem(item, multiplier) : item
   ));
+}
+
+export function createNutritionItemEditState(
+  item: Partial<NutritionItem>,
+  scaleFactor = 1,
+): NutritionItemEditState {
+  const baseValues = normalizeNutritionItem(item);
+  const normalizedScaleFactor = normalizeScaleFactor(scaleFactor);
+  return {
+    ...scaleNutritionItem(baseValues, normalizedScaleFactor),
+    baseValues,
+    scaleFactor: normalizedScaleFactor,
+  };
+}
+
+export function scaleNutritionItemAtState(
+  items: NutritionItemEditState[],
+  index: number,
+  scaleFactor: number,
+): NutritionItemEditState[] {
+  const normalizedScaleFactor = normalizeScaleFactor(scaleFactor);
+  return items.map((item, itemIndex) => (
+    itemIndex === index
+      ? createNutritionItemEditState(item.baseValues, normalizedScaleFactor)
+      : item
+  ));
+}
+
+export function multiplyNutritionItemScaleAtState(
+  items: NutritionItemEditState[],
+  index: number,
+  multiplier: number,
+): NutritionItemEditState[] {
+  if (!Number.isFinite(multiplier) || multiplier <= 0) {
+    throw new RangeError('栄養値の倍率は0より大きい有限値で指定してください。');
+  }
+  const currentScaleFactor = items[index]?.scaleFactor ?? 1;
+  return scaleNutritionItemAtState(items, index, currentScaleFactor * multiplier);
+}
+
+export function getDisplayedNutritionItem(item: NutritionItem): NutritionItem {
+  return normalizeNutritionItem(item);
+}
+
+function isNutritionItemEditState(item: NutritionItem): item is NutritionItemEditState {
+  return 'baseValues' in item && 'scaleFactor' in item;
+}
+
+function normalizeScaleFactor(value: number): number {
+  if (!Number.isFinite(value) || value < 0.1 || value > 3) {
+    throw new RangeError('栄養値の倍率は0.1〜3.0の範囲で指定してください。');
+  }
+  return roundToTenth(value);
 }
 
 function roundToTenth(value: number): number {

@@ -1994,21 +1994,48 @@ h2 {
   padding: 10px;
 }
 
-.item-scale-controls > span {
+.item-scale-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.item-scale-header > span {
   color: var(--muted);
   font-size: 12px;
   font-weight: 800;
 }
 
-.item-scale-actions {
+.item-scale-header strong {
+  color: var(--accent);
+  font-size: 16px;
+}
+
+.item-scale-stepper {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.item-scale-stepper .action-button,
+.item-scale-presets .action-button {
+  width: 100%;
+  min-height: 44px;
+}
+
+.item-scale-presets {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
 }
 
-.item-scale-actions .action-button {
-  width: 100%;
-  min-height: 44px;
+.item-scale-presets .item-scale-reset {
+  grid-column: 1 / -1;
 }
 
 .sticky-actions {
