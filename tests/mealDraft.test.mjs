@@ -160,3 +160,29 @@ test('保存したapi snapshotを使ってapi_edited判定を維持する', () =
     'api_edited',
   );
 });
+
+test('編集枠を保存成功で消すと、新規枠を復元対象にして空フォーム上書きを防ぐ', () => {
+  const newDraft = { ...createDraft(), selectedMealId: null, savedMealFingerprint: null };
+  const editDraft = createDraft();
+  const store = mealDraft.putMealDraft(
+    mealDraft.putMealDraft(mealDraft.createEmptyMealDraftStore(), newDraft),
+    editDraft,
+  );
+  const result = mealDraft.prepareMealDraftReset(store, 'edit', true);
+
+  assert.equal(result.store.active, 'new');
+  assert.equal(result.store.editDraft, null);
+  assert.strictEqual(result.draftToRestore, result.store.newDraft);
+  assert.equal(result.draftToRestore.displayName, '昼食');
+});
+
+test('非同期編集下書き復元は世代またはストア枠が変わると適用しない', () => {
+  const editDraft = createDraft();
+  const store = mealDraft.putMealDraft(mealDraft.createEmptyMealDraftStore(), editDraft);
+
+  assert.equal(mealDraft.canRestoreEditDraft(store, editDraft, 3, 3), true);
+  assert.equal(mealDraft.canRestoreEditDraft(store, editDraft, 3, 4), false);
+
+  const replaced = mealDraft.putMealDraft(mealDraft.createEmptyMealDraftStore(), createDraft({ selectedMealId: 'meal_2' }));
+  assert.equal(mealDraft.canRestoreEditDraft(replaced, editDraft, 3, 3), false);
+});

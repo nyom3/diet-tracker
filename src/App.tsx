@@ -95,6 +95,7 @@ import { getSaveBlockedReason } from './saveReason';
 import { appendNutritionItem, replaceNutritionItemAt } from './nutritionItemAi';
 import {
   clearMealDraftSlot,
+  canRestoreEditDraft,
   createEmptyMealDraftStore,
   createSavedMealFingerprint,
   getMealSnapshotDate,
@@ -102,6 +103,7 @@ import {
   mealDraftStorageKey,
   parseMealDraftStore,
   putMealDraft,
+  prepareMealDraftReset,
   savedMealFingerprintEqual,
   serializeMealDraftStore,
   type MealDraftData,
@@ -324,6 +326,7 @@ export function App(): JSX.Element {
   const [draftHydrated, setDraftHydrated] = React.useState(false);
   const draftStoreRef = React.useRef<MealDraftStore>(createEmptyMealDraftStore());
   const currentDraftRef = React.useRef<MealDraftData | null>(null);
+  const draftInteractionRef = React.useRef(0);
   const settingsButtonRef = React.useRef<HTMLButtonElement | null>(null);
   const hasMountedViewRef = React.useRef(false);
   const photoInputRef = React.useRef<HTMLInputElement | null>(null);
@@ -540,8 +543,8 @@ export function App(): JSX.Element {
     };
   }
 
-  function persistCurrentDraftNow(): void {
-    if (!draftHydrated || draftPausedRef.current || !currentDraftRef.current) return;
+  function persistCurrentDraftNow(force = false): void {
+    if ((!draftHydrated && !force) || draftPausedRef.current || !currentDraftRef.current) return;
     const nextStore = putMealDraft(draftStoreRef.current, currentDraftRef.current);
     draftStoreRef.current = nextStore;
     writeMealDraftStore(nextStore);
@@ -579,6 +582,7 @@ export function App(): JSX.Element {
   }
 
   async function restoreEditDraft(draft: MealDraftData): Promise<void> {
+    const restoreGeneration = draftInteractionRef.current;
     const selectedId = draft.selectedMealId;
     const savedFingerprint = draft.savedMealFingerprint;
     const date = savedFingerprint ? getMealSnapshotDate(savedFingerprint.timestamp) : null;
@@ -592,6 +596,14 @@ export function App(): JSX.Element {
 
     try {
       const snapshot = await getDaySnapshot(date);
+      if (!canRestoreEditDraft(
+        draftStoreRef.current,
+        draft,
+        restoreGeneration,
+        draftInteractionRef.current,
+      )) {
+        return;
+      }
       const currentMeal = snapshot.meals.find((meal) => meal.id === selectedId);
       if (!currentMeal || !savedMealFingerprintEqual(savedFingerprint, createSavedMealFingerprint(currentMeal))) {
         navigateTo('record');
@@ -610,6 +622,14 @@ export function App(): JSX.Element {
       navigateTo('record');
       setStatus({ message: getDraftRestoredMessage(draft), type: 'success' });
     } catch (error) {
+      if (!canRestoreEditDraft(
+        draftStoreRef.current,
+        draft,
+        restoreGeneration,
+        draftInteractionRef.current,
+      )) {
+        return;
+      }
       navigateTo('record');
       setDraftConflict('unavailable');
       setStatus({ message: `編集下書きを確認できませんでした。${getErrorMessage(error)}`, type: 'error' });
@@ -624,6 +644,8 @@ export function App(): JSX.Element {
   }
 
   function discardStoredEditDraft(): void {
+    draftInteractionRef.current += 1;
+    persistCurrentDraftNow(true);
     const nextStore = clearMealDraftSlot(draftStoreRef.current, 'edit');
     draftStoreRef.current = nextStore;
     writeMealDraftStore(nextStore);
@@ -643,6 +665,7 @@ export function App(): JSX.Element {
   }
 
   function markDraftDirty(): void {
+    draftInteractionRef.current += 1;
     draftPausedRef.current = false;
   }
 
@@ -899,12 +922,7 @@ export function App(): JSX.Element {
       } else {
         await processInput(payload);
       }
-      let nextStore = clearMealDraftSlot(draftStoreRef.current, wasEditing ? 'edit' : 'new');
-      nextStore = { ...nextStore, active: null };
-      draftStoreRef.current = nextStore;
-      writeMealDraftStore(nextStore);
-      setDraftConflict(null);
-      resetForm({ restoreNewDraft: false });
+      resetForm({ restoreNewDraft: wasEditing });
       invalidateDashboardCache();
       setSelectedTodayDate(savedDate);
       if (savedDate === todayDateKey) {
@@ -923,24 +941,25 @@ export function App(): JSX.Element {
   }
 
   function resetForm(options: { restoreNewDraft?: boolean } = { restoreNewDraft: true }): void {
-    const activeSlot = selectedMealId ? 'edit' : 'new';
-    let nextStore = clearMealDraftSlot(draftStoreRef.current, activeSlot);
-    const draftToRestore = options.restoreNewDraft === true && activeSlot === 'edit'
-      ? nextStore.newDraft
-      : null;
+    draftInteractionRef.current += 1;
+    const activeSlot = selectedMealId || draftStoreRef.current.active === 'edit' ? 'edit' : 'new';
+    persistCurrentDraftNow(true);
+    const resetResult = prepareMealDraftReset(
+      draftStoreRef.current,
+      activeSlot,
+      options.restoreNewDraft === true,
+    );
+    const nextStore = resetResult.store;
+    const draftToRestore = resetResult.draftToRestore;
 
     if (draftToRestore) {
-      nextStore = { ...nextStore, active: 'new' };
       draftStoreRef.current = nextStore;
       writeMealDraftStore(nextStore);
       applyMealDraft(draftToRestore);
+      setDraftConflict(null);
       return;
     }
 
-    nextStore = {
-      ...nextStore,
-      active: nextStore.editDraft ? 'edit' : null,
-    };
     draftStoreRef.current = nextStore;
     writeMealDraftStore(nextStore);
     setDraftConflict(null);
@@ -1393,7 +1412,8 @@ export function App(): JSX.Element {
   }
 
   async function loadMealForEdit(meal: SavedMeal): Promise<void> {
-    persistCurrentDraftNow();
+    draftInteractionRef.current += 1;
+    persistCurrentDraftNow(true);
     let store = draftStoreRef.current;
     const existingEditDraft = store.editDraft;
     const mealFingerprint = createSavedMealFingerprint(meal);

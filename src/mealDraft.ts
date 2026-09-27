@@ -44,6 +44,11 @@ export type MealDraftStore = {
   editDraft: MealDraftData | null;
 };
 
+export type MealDraftResetResult = {
+  store: MealDraftStore;
+  draftToRestore: MealDraftData | null;
+};
+
 const mealTypes: MealType[] = ['朝', '昼', '夜', '間食'];
 const nutritionKeys: Array<keyof NutritionItem> = [
   'calories_kcal',
@@ -115,6 +120,37 @@ export function clearMealDraftSlot(store: MealDraftStore, slot: 'new' | 'edit'):
   }
 
   return nextStore;
+}
+
+export function prepareMealDraftReset(
+  store: MealDraftStore,
+  slot: 'new' | 'edit',
+  restoreNewDraft: boolean,
+): MealDraftResetResult {
+  const clearedStore = clearMealDraftSlot(store, slot);
+  if (slot === 'edit' && restoreNewDraft && clearedStore.newDraft) {
+    return {
+      store: { ...clearedStore, active: 'new' },
+      draftToRestore: clearedStore.newDraft,
+    };
+  }
+
+  return {
+    store: {
+      ...clearedStore,
+      active: clearedStore.newDraft ? 'new' : clearedStore.editDraft ? 'edit' : null,
+    },
+    draftToRestore: null,
+  };
+}
+
+export function canRestoreEditDraft(
+  store: MealDraftStore,
+  draft: MealDraftData,
+  restoreGeneration: number,
+  currentGeneration: number,
+): boolean {
+  return restoreGeneration === currentGeneration && store.editDraft === draft;
 }
 
 export function createSavedMealFingerprint(meal: SavedMeal): SavedMealFingerprint {
