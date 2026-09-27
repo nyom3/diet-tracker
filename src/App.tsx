@@ -93,10 +93,26 @@ import { TodayView } from './views/TodayView';
 import { TrendView } from './views/TrendView';
 import { getSaveBlockedReason } from './saveReason';
 import { appendNutritionItem, replaceNutritionItemAt } from './nutritionItemAi';
+import {
+  clearMealDraftSlot,
+  canRestoreEditDraft,
+  createEmptyMealDraftStore,
+  createSavedMealFingerprint,
+  getMealSnapshotDate,
+  legacyMealDraftStorageKey,
+  mealDraftStorageKey,
+  parseMealDraftStore,
+  putMealDraft,
+  prepareMealDraftReset,
+  savedMealFingerprintEqual,
+  serializeMealDraftStore,
+  type MealDraftData,
+  type MealDraftStore,
+  type SavedMealFingerprint,
+} from './mealDraft';
 
 const mealTypes: MealType[] = ['朝', '昼', '夜', '間食'];
 const recentMealsPreviewCount = 3;
-const draftStorageKey = 'diet-tracker-meal-draft-v1';
 const targetPanelStorageKey = 'panel_target_open';
 const aiPanelStorageKey = 'panel_ai_open';
 const quickUndoWindowMs = 8000;
@@ -288,6 +304,8 @@ export function App(): JSX.Element {
   const [dashboardCache, setDashboardCache] = React.useState<Partial<Record<DashboardRangeDays, DashboardData>>>({});
   const [dailyFeedback, setDailyFeedback] = React.useState<DailyFeedback | null>(null);
   const [selectedMealId, setSelectedMealId] = React.useState('');
+  const [selectedMealFingerprint, setSelectedMealFingerprint] = React.useState<SavedMealFingerprint | null>(null);
+  const [draftConflict, setDraftConflict] = React.useState<'changed' | 'deleted' | 'unavailable' | null>(null);
   const [recentStatus, setRecentStatus] = React.useState<ResourceStatus>('loading');
   const [favoritesStatus, setFavoritesStatus] = React.useState<ResourceStatus>('loading');
   const [summaryStatus, setSummaryStatus] = React.useState<ResourceStatus>('loading');
@@ -305,10 +323,15 @@ export function App(): JSX.Element {
   const [quickUndo, setQuickUndo] = React.useState<QuickUndo | null>(null);
   const draftPausedRef = React.useRef(true);
   const quickUndoTimeoutRef = React.useRef<number | null>(null);
+  const [draftHydrated, setDraftHydrated] = React.useState(false);
+  const draftStoreRef = React.useRef<MealDraftStore>(createEmptyMealDraftStore());
+  const currentDraftRef = React.useRef<MealDraftData | null>(null);
+  const draftInteractionRef = React.useRef(0);
   const settingsButtonRef = React.useRef<HTMLButtonElement | null>(null);
   const hasMountedViewRef = React.useRef(false);
   const photoInputRef = React.useRef<HTMLInputElement | null>(null);
   const selectedImagesRef = React.useRef<PreparedImage[]>([]);
+  const photoNeedsReselectionRef = React.useRef(false);
   const photoRequestIdRef = React.useRef(0);
   const dashboardRequestIdRef = React.useRef(0);
   const homeSnapshotRequestIdRef = React.useRef(0);
@@ -362,6 +385,8 @@ export function App(): JSX.Element {
     : null;
 
   selectedImagesRef.current = selectedImages;
+
+  currentDraftRef.current = createCurrentDraftData();
 
   React.useEffect(() => {
     return () => {
@@ -424,41 +449,223 @@ export function App(): JSX.Element {
   }, []);
 
   React.useEffect(() => {
-    const draft = readMealDraft();
+    const store = readMealDraftStore();
+    draftStoreRef.current = store;
 
-    if (!draft || selectedMealId) {
-      return;
+    if (store.active === 'new' && store.newDraft) {
+      applyMealDraft(store.newDraft);
+      navigateTo('record');
+      setDraftHydrated(true);
+      setStatus({ message: getDraftRestoredMessage(store.newDraft), type: 'success' });
+      return undefined;
     }
 
-    setMealType(draft.mealType);
-    setDatetime(draft.datetime);
-    setInputMode(draft.inputMode);
-    setMealText(draft.mealText);
-    setPhotoNote(draft.photoNote);
-    setDisplayName(draft.displayName);
-    draftPausedRef.current = false;
+    if (store.active === 'edit' && store.editDraft) {
+      let cancelled = false;
+      void restoreEditDraft(store.editDraft).finally(() => {
+        if (!cancelled) setDraftHydrated(true);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setDraftHydrated(true);
+    return undefined;
   }, []);
 
   React.useEffect(() => {
-    if (selectedMealId || draftPausedRef.current) {
+    if (!draftHydrated || draftPausedRef.current) {
       return undefined;
     }
 
     const timeoutId = window.setTimeout(() => {
-      writeMealDraft({
-        mealType,
-        datetime,
-        inputMode,
-        mealText,
-        photoNote,
-        displayName,
-      });
+      persistCurrentDraftNow();
     }, 500);
 
     return () => window.clearTimeout(timeoutId);
-  }, [datetime, displayName, inputMode, mealText, mealType, photoNote, selectedMealId]);
+  }, [
+    datetime,
+    displayName,
+    draftHydrated,
+    estimateMode,
+    hasItemBreakdown,
+    hasNutrition,
+    inputMode,
+    items,
+    mealText,
+    mealType,
+    photoNote,
+    persistedSource,
+    selectedMealFingerprint,
+    selectedMealId,
+    standaloneItemAdded,
+    standaloneTotalActive,
+    total,
+  ]);
+
+  React.useEffect(() => {
+    if (!draftHydrated) return undefined;
+
+    const flush = () => persistCurrentDraftNow();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [draftHydrated]);
+
+  function createCurrentDraftData(): MealDraftData {
+    return {
+      mealType,
+      datetime,
+      inputMode,
+      mealText,
+      photoNote,
+      displayName,
+      items: items.map((item) => ({ ...item, baseValues: { ...item.baseValues } })),
+      total: { ...total },
+      estimateMode,
+      apiEstimateSnapshot: apiEstimateSnapshot
+        ? { items: apiEstimateSnapshot.items.map((item) => ({ ...item })) }
+        : null,
+      persistedSource,
+      hasItemBreakdown,
+      standaloneTotalActive,
+      standaloneItemAdded,
+      hasNutrition,
+      selectedMealId: selectedMealId || null,
+      savedMealFingerprint: selectedMealId ? selectedMealFingerprint : null,
+    };
+  }
+
+  function persistCurrentDraftNow(force = false): void {
+    if ((!draftHydrated && !force) || draftPausedRef.current || !currentDraftRef.current) return;
+    const nextStore = putMealDraft(draftStoreRef.current, currentDraftRef.current);
+    draftStoreRef.current = nextStore;
+    writeMealDraftStore(nextStore);
+  }
+
+  function applyMealDraft(draft: MealDraftData): void {
+    setMealType(draft.mealType);
+    setDatetime(draft.datetime || createLocalDatetimeValue());
+    setInputMode(draft.inputMode);
+    setEstimateMode(draft.estimateMode);
+    clearPreparedPhotos();
+    setPhotoNote(draft.photoNote);
+    setMealText(draft.mealText);
+    setDisplayName(draft.displayName);
+    setManualJson('');
+    setTotal({ ...draft.total });
+    setItems(draft.items.map((item) => ({ ...item, baseValues: { ...item.baseValues } })));
+    setApiEstimateSnapshot(draft.apiEstimateSnapshot
+      ? { items: draft.apiEstimateSnapshot.items.map((item) => ({ ...item })) }
+      : null);
+    setPersistedSource(draft.persistedSource);
+    setHasItemBreakdown(draft.hasItemBreakdown);
+    setStandaloneTotalActive(draft.standaloneTotalActive);
+    setStandaloneItemAdded(draft.standaloneItemAdded);
+    setHasNutrition(draft.hasNutrition);
+    setSelectedMealId(draft.selectedMealId || '');
+    setSelectedMealFingerprint(draft.savedMealFingerprint);
+    setItemAiPromptIndex(null);
+    setItemAiInstruction('');
+    setItemAiAddPromptOpen(false);
+    setItemAiAddInstruction('');
+    setItemAiUndo(null);
+    photoNeedsReselectionRef.current = draft.inputMode === 'photo';
+    draftPausedRef.current = false;
+  }
+
+  async function restoreEditDraft(draft: MealDraftData): Promise<void> {
+    const restoreGeneration = draftInteractionRef.current;
+    const selectedId = draft.selectedMealId;
+    const savedFingerprint = draft.savedMealFingerprint;
+    const date = savedFingerprint ? getMealSnapshotDate(savedFingerprint.timestamp) : null;
+
+    if (!selectedId || !savedFingerprint || !date) {
+      navigateTo('record');
+      setDraftConflict('unavailable');
+      setStatus({ message: '編集下書きの対象を確認できないため、復元していません。履歴を更新してください。', type: 'error' });
+      return;
+    }
+
+    try {
+      const snapshot = await getDaySnapshot(date);
+      if (!canRestoreEditDraft(
+        draftStoreRef.current,
+        draft,
+        restoreGeneration,
+        draftInteractionRef.current,
+      )) {
+        return;
+      }
+      const currentMeal = snapshot.meals.find((meal) => meal.id === selectedId);
+      if (!currentMeal || !savedMealFingerprintEqual(savedFingerprint, createSavedMealFingerprint(currentMeal))) {
+        navigateTo('record');
+        setDraftConflict(currentMeal ? 'changed' : 'deleted');
+        setStatus({
+          message: currentMeal
+            ? '対象の食事記録が変更されています。編集下書きは復元していません。履歴を更新して確認してください。'
+            : '対象の食事記録が削除されています。編集下書きは復元していません。履歴を更新してください。',
+          type: 'error',
+        });
+        return;
+      }
+
+      applyMealDraft(draft);
+      setDraftConflict(null);
+      navigateTo('record');
+      setStatus({ message: getDraftRestoredMessage(draft), type: 'success' });
+    } catch (error) {
+      if (!canRestoreEditDraft(
+        draftStoreRef.current,
+        draft,
+        restoreGeneration,
+        draftInteractionRef.current,
+      )) {
+        return;
+      }
+      navigateTo('record');
+      setDraftConflict('unavailable');
+      setStatus({ message: `編集下書きを確認できませんでした。${getErrorMessage(error)}`, type: 'error' });
+    }
+  }
+
+  function getDraftRestoredMessage(draft: MealDraftData): string {
+    if (draft.inputMode === 'photo') {
+      return '下書きを復元しました。写真は保存していないため、再推定や写真が必要な操作には写真を再選択してください。';
+    }
+    return draft.selectedMealId ? '編集下書きを復元しました。' : '下書きを復元しました。';
+  }
+
+  function discardStoredEditDraft(): void {
+    draftInteractionRef.current += 1;
+    persistCurrentDraftNow(true);
+    const nextStore = clearMealDraftSlot(draftStoreRef.current, 'edit');
+    draftStoreRef.current = nextStore;
+    writeMealDraftStore(nextStore);
+    setDraftConflict(null);
+
+    if (nextStore.newDraft) {
+      const activeStore = { ...nextStore, active: 'new' as const };
+      draftStoreRef.current = activeStore;
+      writeMealDraftStore(activeStore);
+      applyMealDraft(nextStore.newDraft);
+      setStatus({ message: getDraftRestoredMessage(nextStore.newDraft), type: 'success' });
+      return;
+    }
+
+    resetForm({ restoreNewDraft: false });
+    setStatus({ message: '編集下書きを破棄しました。履歴から最新の記録を開いてください。', type: 'success' });
+  }
 
   function markDraftDirty(): void {
+    draftInteractionRef.current += 1;
     draftPausedRef.current = false;
   }
 
@@ -504,6 +711,7 @@ export function App(): JSX.Element {
       }
 
       replaceSelectedImages([...selectedImagesRef.current, preparedImage]);
+      photoNeedsReselectionRef.current = false;
       setPhotoStatus('ready');
       if (photoInputRef.current) {
         photoInputRef.current.value = '';
@@ -623,6 +831,7 @@ export function App(): JSX.Element {
   }
 
   function applyNutrition(result: NutritionResult, captureApiSnapshot: boolean): void {
+    markDraftDirty();
     const nextTotal = normalizeTotal(result.total || result);
     const nextItems = Array.isArray(result.items)
       ? result.items.map(normalizeItem).map((item) => createNutritionItemEditState(item))
@@ -648,6 +857,11 @@ export function App(): JSX.Element {
   }
 
   async function handleEstimate(): Promise<void> {
+    if (inputMode === 'photo' && selectedImages.length === 0 && photoNeedsReselectionRef.current) {
+      setStatus({ message: '写真を再選択してから推定してください。', type: 'error' });
+      return;
+    }
+
     try {
       setBusy('estimate');
       setStatus({ message: '推定中です。' });
@@ -708,8 +922,7 @@ export function App(): JSX.Element {
       } else {
         await processInput(payload);
       }
-      clearMealDraft();
-      resetForm();
+      resetForm({ restoreNewDraft: wasEditing });
       invalidateDashboardCache();
       setSelectedTodayDate(savedDate);
       if (savedDate === todayDateKey) {
@@ -727,9 +940,31 @@ export function App(): JSX.Element {
     }
   }
 
-  function resetForm(): void {
+  function resetForm(options: { restoreNewDraft?: boolean } = { restoreNewDraft: true }): void {
+    draftInteractionRef.current += 1;
+    const activeSlot = selectedMealId || draftStoreRef.current.active === 'edit' ? 'edit' : 'new';
+    persistCurrentDraftNow(true);
+    const resetResult = prepareMealDraftReset(
+      draftStoreRef.current,
+      activeSlot,
+      options.restoreNewDraft === true,
+    );
+    const nextStore = resetResult.store;
+    const draftToRestore = resetResult.draftToRestore;
+
+    if (draftToRestore) {
+      draftStoreRef.current = nextStore;
+      writeMealDraftStore(nextStore);
+      applyMealDraft(draftToRestore);
+      setDraftConflict(null);
+      return;
+    }
+
+    draftStoreRef.current = nextStore;
+    writeMealDraftStore(nextStore);
+    setDraftConflict(null);
+    photoNeedsReselectionRef.current = false;
     draftPausedRef.current = true;
-    clearMealDraft();
     setMealType(getDefaultMealType());
     setInputMode('photo');
     setEstimateMode('api');
@@ -743,6 +978,7 @@ export function App(): JSX.Element {
     setItems([]);
     setApiEstimateSnapshot(null);
     setPersistedSource(null);
+    setSelectedMealFingerprint(null);
     setHasItemBreakdown(false);
     setStandaloneTotalActive(false);
     setStandaloneItemAdded(false);
@@ -773,6 +1009,7 @@ export function App(): JSX.Element {
 
   function handleUndoItemAi(): void {
     if (!itemAiUndo) return;
+    markDraftDirty();
     setItems(itemAiUndo.items.map((item) => ({ ...item, baseValues: { ...item.baseValues } })));
     setTotal({ ...itemAiUndo.total });
     setApiEstimateSnapshot(itemAiUndo.apiEstimateSnapshot
@@ -810,6 +1047,7 @@ export function App(): JSX.Element {
         images,
       });
       const nextItems = replaceNutritionItemAt(items, index, createNutritionItemEditState(result.item));
+      markDraftDirty();
       setItemAiUndo(createItemAiUndoSnapshot());
       setItems(nextItems);
       setTotal(calculateTotal(nextItems));
@@ -855,6 +1093,7 @@ export function App(): JSX.Element {
       const nextItem = createNutritionItemEditState(result.item);
       const nextItems = appendNutritionItem(items, nextItem);
       const preserveStandaloneTotal = items.length === 0 && standaloneTotalActive;
+      markDraftDirty();
       setItemAiUndo(createItemAiUndoSnapshot());
       setItems(nextItems);
       if (!preserveStandaloneTotal) {
@@ -881,6 +1120,7 @@ export function App(): JSX.Element {
   }
 
   function updateItemScale(index: number, multiplier: number): void {
+    markDraftDirty();
     const nextItems = scaleNutritionItemAtState(items, index, multiplier);
     setItems(nextItems);
     setTotal(calculateTotal(nextItems));
@@ -898,6 +1138,7 @@ export function App(): JSX.Element {
   function multiplyItemScale(index: number, multiplier: number): void {
     const nextItems = multiplyNutritionItemScaleAtState(items, index, multiplier);
     if (nextItems === items) return;
+    markDraftDirty();
     setItems(nextItems);
     setTotal(calculateTotal(nextItems));
     setStandaloneTotalActive(false);
@@ -906,6 +1147,7 @@ export function App(): JSX.Element {
   }
 
   function updateItemName(index: number, value: string): void {
+    markDraftDirty();
     const nextItems = items.map((item, itemIndex) => (
       itemIndex === index ? updateNutritionItemName(item, value) : item
     ));
@@ -916,6 +1158,7 @@ export function App(): JSX.Element {
   }
 
   function updateItemQuantity(index: number, value: string): void {
+    markDraftDirty();
     setItems((current) => current.map((item, itemIndex) => (
       itemIndex === index ? updateNutritionItemQuantity(item, value) : item
     )));
@@ -924,6 +1167,7 @@ export function App(): JSX.Element {
   }
 
   function updateItemNutrition(index: number, key: NutritionKey, value: string): void {
+    markDraftDirty();
     const nextItems = items.map((item, itemIndex) => (
       itemIndex === index
         ? updateNutritionItemValue(item, key, normalizeNumber(value))
@@ -937,6 +1181,7 @@ export function App(): JSX.Element {
   }
 
   function removeItem(index: number): void {
+    markDraftDirty();
     const nextItems = items.filter((_, itemIndex) => itemIndex !== index);
     const restoreStandaloneTotal = nextItems.length === 0 && standaloneItemAdded && standaloneTotalActive;
     setItems(nextItems);
@@ -955,6 +1200,7 @@ export function App(): JSX.Element {
   }
 
   function addItem(): void {
+    markDraftDirty();
     const nextItems = [...items, createNutritionItemEditState(createEmptyNutritionItem())];
     const preserveStandaloneTotal = items.length === 0 && standaloneTotalActive;
     setItems(nextItems);
@@ -1165,13 +1411,58 @@ export function App(): JSX.Element {
     );
   }
 
-  function loadMealForEdit(meal: SavedMeal): void {
+  async function loadMealForEdit(meal: SavedMeal): Promise<void> {
+    draftInteractionRef.current += 1;
+    persistCurrentDraftNow(true);
+    let store = draftStoreRef.current;
+    const existingEditDraft = store.editDraft;
+    const mealFingerprint = createSavedMealFingerprint(meal);
+
+    if (existingEditDraft?.selectedMealId && existingEditDraft.selectedMealId !== meal.id) {
+      const confirmed = window.confirm(
+        '別の食事記録の編集下書きがあります。破棄してこの記録を開きますか？\nキャンセルすると、既存の下書きを保持します。',
+      );
+      if (!confirmed) {
+        setStatus({ message: '既存の編集下書きを保持しました。', type: 'error' });
+        return;
+      }
+      store = clearMealDraftSlot(store, 'edit');
+      draftStoreRef.current = store;
+      writeMealDraftStore(store);
+    }
+
+    if (
+      existingEditDraft?.selectedMealId === meal.id
+      && savedMealFingerprintEqual(existingEditDraft.savedMealFingerprint, mealFingerprint)
+    ) {
+      applyMealDraft(existingEditDraft);
+      setDraftConflict(null);
+      setStatus({ message: getDraftRestoredMessage(existingEditDraft), type: 'success' });
+      navigateTo('record');
+      return;
+    }
+
+    if (existingEditDraft?.selectedMealId === meal.id && existingEditDraft.savedMealFingerprint) {
+      const confirmed = window.confirm(
+        'この記録は編集下書きを作成した後に変更されています。古い編集下書きを破棄して最新の記録を開きますか？',
+      );
+      if (!confirmed) {
+        setStatus({ message: '編集下書きを保持しました。', type: 'error' });
+        return;
+      }
+      store = clearMealDraftSlot(store, 'edit');
+      draftStoreRef.current = store;
+      writeMealDraftStore(store);
+    }
+
     const nextItems = parseBreakdownItems(meal.breakdown_json)
       .map((item) => createNutritionItemEditState(item));
 
     setSelectedMealId(meal.id);
+    setSelectedMealFingerprint(mealFingerprint);
     setMealType(meal.meal_type);
     setInputMode('text');
+    photoNeedsReselectionRef.current = false;
     setEstimateMode(meal.source === 'manual' ? 'manual' : 'api');
     setDatetime(createLocalDatetimeValue(new Date(meal.timestamp)));
     clearPreparedPhotos();
@@ -1192,7 +1483,8 @@ export function App(): JSX.Element {
     setItemAiAddPromptOpen(false);
     setItemAiAddInstruction('');
     setItemAiUndo(null);
-    draftPausedRef.current = true;
+    setDraftConflict(null);
+    draftPausedRef.current = false;
     setStatus({ message: '最近の記録を読み込みました。', type: 'success' });
     navigateTo('record');
   }
@@ -1759,10 +2051,24 @@ export function App(): JSX.Element {
       {currentView === 'record' && (
         <RecordView>
           <form className="meal-form record-form" onSubmit={handleSave}>
+        {draftConflict && (
+          <div className="edit-banner" role="alert">
+            <span>
+              {draftConflict === 'changed'
+                ? '対象記録が変更されています。下書きは復元していません。'
+                : draftConflict === 'deleted'
+                  ? '対象記録が削除されています。下書きは復元していません。'
+                  : '対象記録を確認できないため、下書きは復元していません。'}
+            </span>
+            <button type="button" onClick={discardStoredEditDraft}>
+              編集下書きを破棄
+            </button>
+          </div>
+        )}
         {selectedMealId && (
           <div className="edit-banner">
             <span>記録を編集中</span>
-            <button type="button" onClick={resetForm}>
+            <button type="button" onClick={() => resetForm()}>
               <X size={16} />
               解除
             </button>
@@ -1930,10 +2236,16 @@ export function App(): JSX.Element {
               <h2>カロリーとPFC</h2>
             </div>
             <div className="mode-switch">
-              <SegmentedButton active={estimateMode === 'api'} onClick={() => setEstimateMode('api')}>
+              <SegmentedButton active={estimateMode === 'api'} onClick={() => {
+                markDraftDirty();
+                setEstimateMode('api');
+              }}>
                 API
               </SegmentedButton>
-              <SegmentedButton active={estimateMode === 'manual'} onClick={() => setEstimateMode('manual')}>
+              <SegmentedButton active={estimateMode === 'manual'} onClick={() => {
+                markDraftDirty();
+                setEstimateMode('manual');
+              }}>
                 手動
               </SegmentedButton>
             </div>
@@ -2002,6 +2314,7 @@ export function App(): JSX.Element {
                       inputMode="decimal"
                       value={total[key]}
                       onChange={(event) => {
+                        markDraftDirty();
                         setTotal({
                           ...total,
                           [key]: key === 'calories_kcal'
@@ -2025,6 +2338,7 @@ export function App(): JSX.Element {
                   inputMode="numeric"
                   value={total.calories_kcal}
                   onChange={(event) => {
+                    markDraftDirty();
                     setTotal({ ...total, calories_kcal: Math.round(normalizeNumber(event.target.value)) });
                     setStandaloneTotalActive(true);
                     setHasNutrition(true);
@@ -2831,55 +3145,23 @@ function isOverTarget(actual: number, target: number | null | undefined): boolea
   return target != null && actual > target;
 }
 
-type MealDraft = {
-  mealType: MealType;
-  datetime: string;
-  inputMode: InputMode;
-  mealText: string;
-  photoNote: string;
-  displayName: string;
-};
-
-function readMealDraft(): MealDraft | null {
+function readMealDraftStore(): MealDraftStore {
   try {
-    const raw = window.localStorage.getItem(draftStorageKey);
-
-    if (!raw) {
-      return null;
-    }
-
-    const parsed = JSON.parse(raw) as Partial<MealDraft>;
-    const mealType = mealTypes.includes(parsed.mealType as MealType)
-      ? parsed.mealType as MealType
-      : getDefaultMealType();
-    const inputMode = parsed.inputMode === 'text' ? 'text' : 'photo';
-
-    return {
-      mealType,
-      datetime: typeof parsed.datetime === 'string' && parsed.datetime ? parsed.datetime : createLocalDatetimeValue(),
-      inputMode,
-      mealText: typeof parsed.mealText === 'string' ? parsed.mealText : '',
-      photoNote: typeof parsed.photoNote === 'string' ? parsed.photoNote : '',
-      displayName: typeof parsed.displayName === 'string' ? parsed.displayName : '',
-    };
+    return parseMealDraftStore(
+      window.localStorage.getItem(mealDraftStorageKey),
+      window.localStorage.getItem(legacyMealDraftStorageKey),
+    );
   } catch {
-    return null;
+    return createEmptyMealDraftStore();
   }
 }
 
-function writeMealDraft(draft: MealDraft): void {
+function writeMealDraftStore(store: MealDraftStore): void {
   try {
-    window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
+    window.localStorage.setItem(mealDraftStorageKey, serializeMealDraftStore(store));
+    window.localStorage.removeItem(legacyMealDraftStorageKey);
   } catch {
     // localStorage may be unavailable in private browsing or constrained WebViews.
-  }
-}
-
-function clearMealDraft(): void {
-  try {
-    window.localStorage.removeItem(draftStorageKey);
-  } catch {
-    // Ignore storage cleanup failures; saving must not fail because draft cleanup failed.
   }
 }
 
