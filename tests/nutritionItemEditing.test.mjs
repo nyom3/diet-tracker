@@ -72,6 +72,27 @@ test('再現: 奇数kcalの半分が小数にならず、PFCの丸め誤差を�
   assert.equal(doubled.scaleFactor, 1);
 });
 
+test('相対倍率は小数を保持し、半分と2倍を往復できる', () => {
+  const initial = editing.createNutritionItemEditState(item);
+  const oneAndHalf = editing.scaleNutritionItemAtState([initial], 0, 1.5)[0];
+  const half = editing.multiplyNutritionItemScaleAtState([oneAndHalf], 0, 0.5)[0];
+  const restored = editing.multiplyNutritionItemScaleAtState([half], 0, 2)[0];
+
+  assert.equal(half.scaleFactor, 0.75);
+  assert.equal(restored.scaleFactor, 1.5);
+  assert.equal(restored.calories_kcal, oneAndHalf.calories_kcal);
+  assert.equal(restored.protein_g, oneAndHalf.protein_g);
+});
+
+test('相対倍率が範囲外になる操作は状態を変更せず例外にしない', () => {
+  const initial = editing.createNutritionItemEditState(item, 1.6);
+  const items = [initial];
+  const unchanged = editing.multiplyNutritionItemScaleAtState(items, 0, 2);
+
+  assert.strictEqual(unchanged, items);
+  assert.equal(unchanged[0].scaleFactor, 1.6);
+});
+
 test('kcalを300から150へ直して保存し、編集時に読み戻しても150を保持する', () => {
   const edited = editing.updateNutritionItemValue(item, 'calories_kcal', 150);
   const savedJson = editing.serializeNutritionItems([edited]);
@@ -165,6 +186,9 @@ test('倍率は編集画面だけで保持し、表示中の品目値を保存�
   assert.doesNotMatch(appSource, /\bservings\b|applyServings|updateServing/);
   assert.match(appSource, /multiplyItemScale/);
   assert.match(appSource, /scaleFactor/);
+  assert.match(appSource, /現在の½/);
+  assert.match(appSource, /×1\.5/);
+  assert.match(appSource, /現在の2倍/);
   assert.match(appSource, /元に戻す（×1\.0）/);
   assert.match(appSource, /breakdown_json: serializeNutritionItems\(items\)/);
 });

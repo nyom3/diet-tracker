@@ -897,6 +897,7 @@ export function App(): JSX.Element {
 
   function multiplyItemScale(index: number, multiplier: number): void {
     const nextItems = multiplyNutritionItemScaleAtState(items, index, multiplier);
+    if (nextItems === items) return;
     setItems(nextItems);
     setTotal(calculateTotal(nextItems));
     setStandaloneTotalActive(false);
@@ -2210,7 +2211,7 @@ export function App(): JSX.Element {
                     <div className="item-scale-controls" aria-label={`${item.name}の量調整`}>
                       <div className="item-scale-header">
                         <span>量調整（kcal・PFCを比例変更）</span>
-                        <strong>×{item.scaleFactor.toFixed(1)}</strong>
+                        <strong>×{item.scaleFactor.toFixed(2)}</strong>
                       </div>
                       <div className="item-scale-stepper">
                         <button
@@ -2222,7 +2223,7 @@ export function App(): JSX.Element {
                         >
                           −
                         </button>
-                        <span aria-live="polite">×{item.scaleFactor.toFixed(1)}</span>
+                        <span aria-live="polite">×{item.scaleFactor.toFixed(2)}</span>
                         <button
                           className="action-button secondary-action"
                           type="button"
@@ -2235,16 +2236,18 @@ export function App(): JSX.Element {
                       </div>
                       <div className="item-scale-presets">
                         {[
-                          { label: '½', value: 0.5, relative: true },
+                          { label: '現在の½', value: 0.5, relative: true },
                           { label: '×1.0', value: 1 },
-                          { label: '1.5倍', value: 1.5 },
-                          { label: '2倍', value: 2, relative: true },
+                          { label: '×1.5', value: 1.5 },
+                          { label: '現在の2倍', value: 2, relative: true },
                         ].map(({ label, value, relative }) => (
                           <button
                             key={value}
                             className="action-button secondary-action"
                             type="button"
-                            disabled={busy !== null}
+                            disabled={busy !== null || (relative && (
+                              item.scaleFactor * value < 0.1 || item.scaleFactor * value > 3
+                            ))}
                             onClick={() => relative
                               ? multiplyItemScale(index, value)
                               : updateItemScale(index, value)}

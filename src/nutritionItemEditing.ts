@@ -167,13 +167,7 @@ export function createNutritionItemEditState(
   item: Partial<NutritionItem>,
   scaleFactor = 1,
 ): NutritionItemEditState {
-  const baseValues = normalizeNutritionItem(item);
-  const normalizedScaleFactor = normalizeScaleFactor(scaleFactor);
-  return {
-    ...scaleNutritionItem(baseValues, normalizedScaleFactor),
-    baseValues,
-    scaleFactor: normalizedScaleFactor,
-  };
+  return createNutritionItemEditStateWithScale(item, scaleFactor, true);
 }
 
 export function scaleNutritionItemAtState(
@@ -181,10 +175,9 @@ export function scaleNutritionItemAtState(
   index: number,
   scaleFactor: number,
 ): NutritionItemEditState[] {
-  const normalizedScaleFactor = normalizeScaleFactor(scaleFactor);
   return items.map((item, itemIndex) => (
     itemIndex === index
-      ? createNutritionItemEditState(item.baseValues, normalizedScaleFactor)
+      ? createNutritionItemEditStateWithScale(item.baseValues, scaleFactor, true)
       : item
   ));
 }
@@ -198,7 +191,14 @@ export function multiplyNutritionItemScaleAtState(
     throw new RangeError('栄養値の倍率は0より大きい有限値で指定してください。');
   }
   const currentScaleFactor = items[index]?.scaleFactor ?? 1;
-  return scaleNutritionItemAtState(items, index, currentScaleFactor * multiplier);
+  const nextScaleFactor = currentScaleFactor * multiplier;
+  if (!isScaleFactorInRange(nextScaleFactor)) return items;
+
+  return items.map((item, itemIndex) => (
+    itemIndex === index
+      ? createNutritionItemEditStateWithScale(item.baseValues, nextScaleFactor, false)
+      : item
+  ));
 }
 
 export function getDisplayedNutritionItem(item: NutritionItem): NutritionItem {
@@ -209,11 +209,29 @@ function isNutritionItemEditState(item: NutritionItem): item is NutritionItemEdi
   return 'baseValues' in item && 'scaleFactor' in item;
 }
 
-function normalizeScaleFactor(value: number): number {
-  if (!Number.isFinite(value) || value < 0.1 || value > 3) {
+function createNutritionItemEditStateWithScale(
+  item: Partial<NutritionItem>,
+  scaleFactor: number,
+  roundScale: boolean,
+): NutritionItemEditState {
+  const baseValues = normalizeNutritionItem(item);
+  const normalizedScaleFactor = normalizeScaleFactor(scaleFactor, roundScale);
+  return {
+    ...scaleNutritionItem(baseValues, normalizedScaleFactor),
+    baseValues,
+    scaleFactor: normalizedScaleFactor,
+  };
+}
+
+function normalizeScaleFactor(value: number, roundScale: boolean): number {
+  if (!isScaleFactorInRange(value)) {
     throw new RangeError('栄養値の倍率は0.1〜3.0の範囲で指定してください。');
   }
-  return roundToTenth(value);
+  return roundScale ? roundToTenth(value) : value;
+}
+
+function isScaleFactorInRange(value: number): boolean {
+  return Number.isFinite(value) && value >= 0.1 && value <= 3;
 }
 
 function roundToTenth(value: number): number {
