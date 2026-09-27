@@ -80,6 +80,7 @@ const NUTRITION_ITEM_AI_MAX_ITEM_NAME_LENGTH = 120;
 
 function doGet() {
   return HtmlService.createHtmlOutputFromFile('index')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1')
     .setTitle('食事記録')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
