@@ -625,7 +625,7 @@ export function App(): JSX.Element {
   function applyNutrition(result: NutritionResult, captureApiSnapshot: boolean): void {
     const nextTotal = normalizeTotal(result.total || result);
     const nextItems = Array.isArray(result.items)
-      ? result.items.map(normalizeItem).map(createNutritionItemEditState)
+      ? result.items.map(normalizeItem).map((item) => createNutritionItemEditState(item))
       : [];
 
     setTotal(nextTotal);
@@ -1166,7 +1166,8 @@ export function App(): JSX.Element {
   }
 
   function loadMealForEdit(meal: SavedMeal): void {
-    const nextItems = parseBreakdownItems(meal.breakdown_json).map(createNutritionItemEditState);
+    const nextItems = parseBreakdownItems(meal.breakdown_json)
+      .map((item) => createNutritionItemEditState(item));
 
     setSelectedMealId(meal.id);
     setMealType(meal.meal_type);

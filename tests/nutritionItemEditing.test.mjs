@@ -192,3 +192,8 @@ test('倍率は編集画面だけで保持し、表示中の品目値を保存�
   assert.match(appSource, /元に戻す（×1\.0）/);
   assert.match(appSource, /breakdown_json: serializeNutritionItems\(items\)/);
 });
+
+test('品目編集状態の生成関数をmapへ直接渡してindexを倍率にしない', () => {
+  assert.doesNotMatch(appSource, /\.map\(createNutritionItemEditState\)/);
+  assert.match(appSource, /\.map\(\(item\) => createNutritionItemEditState\(item\)\)/);
+});
