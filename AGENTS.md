@@ -100,6 +100,8 @@ diet-tracker は、食事カロリーを記録し続けられる状態を作る�
 - 文書のみの変更: 記載したパス・コマンド・仕様を実物と照合し、`git diff --check` と差分確認を行う。動作に影響しない文書編集のために build やテストを追加実行する必要はない。
 - ロジック・GAS境界の変更: 関連する `tests/*.test.mjs` を選び、`node --test --test-concurrency=1 tests/<対象>.test.mjs` で確認する。共通境界への影響が広い場合は `npm test` を使う。
 - フロント・型・ビルド構成の変更: `npm run build` を実行する。UI変更では利用可能なブラウザで主要操作とスマホ幅を確認し、GAS実環境でのみ確認できる部分を区別する。
+- GAS Web App の外側ページや実行環境に依存する挙動（例: HtmlService の viewport、`google.script.run`）は、Vite のローカル画面やモバイルエミュレーションでは検証できない。現行 workspace には作業ブランチの GAS `/dev` を確認する経路がなく、実際の挙動確認は main merge 後の `Deploy to GAS` workflow による本番反映と実機確認で行う。
+- merge / deploy が委任されている場合、この本番反映を検証工程として扱う。レビュー・PR 必須チェック後に merge し、deploy workflow の成功を確認してからユーザーが本番 Web App を実機確認する。利用できない `/dev` 確認を merge 前の停止条件にしない。PR本文の `Closes #<issue>` により Issue が merge 時に自動クローズし、実機確認結果がまだ報告されていない場合は、merge 後に Issue を再オープンして確認結果が出るまで未完了状態を保つ。
 - PRの必須チェックは `.github/workflows/pr.yml` の `npm ci` → `npm test` → `npm run build`。ローカルの確認範囲を絞ってもCIのゲートは変更しない。
 - ローカル検証と本番反映を分ける。`gas:push` と `gas:deploy*` は外部への書き込みを伴うため、委任された範囲でのみ実行する。合意済みの修正・検証は結果を見て続け、変更も新しい懸念もない成功済み確認を繰り返さない。
 
